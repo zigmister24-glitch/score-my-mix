@@ -69,19 +69,49 @@ function inferTrackIdentity(file: File) {
   }
 }
 
-function readLeaderboard(): LeaderboardEntry[] {
+async function readLeaderboard(): Promise<{
+  allTime: LeaderboardEntry[]
+  hotStreak: LeaderboardEntry[]
+}> {
   try {
-    const raw = window.localStorage.getItem(LEADERBOARD_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.map((entry) => ({
+    const res = await fetch('/api/leaderboard', {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+      },
+    })
+
+    const data = await res.json()
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || 'Leaderboard load failed')
+    }
+
+    const mapEntry = (entry: any): LeaderboardEntry => ({
       ...entry,
-      durationSeconds: Math.round(Number(entry.durationSeconds ?? 0)),
-      normalizedTitle: String(entry.normalizedTitle ?? normalizeTitle(entry.title || entry.filename || entry.displayName || '')),
-    }))
-  } catch {
-    return []
+      title: entry.display_name || entry.displayName || entry.original_filename || entry.filename || 'Untitled',
+      displayName: entry.display_name || entry.displayName || entry.original_filename || entry.filename || 'Untitled',
+      filename: entry.original_filename || entry.filename || '',
+      score: Math.round(Number(entry.score ?? 0)),
+      durationSeconds: Math.round(Number(entry.duration_seconds ?? entry.durationSeconds ?? 0)),
+      normalizedTitle: String(
+        entry.normalized_title ??
+        entry.normalizedTitle ??
+        normalizeTitle(entry.display_name || entry.original_filename || entry.filename || '')
+      ),
+      uploadedAt: entry.uploaded_at || entry.uploadedAt || new Date().toISOString(),
+    })
+
+    return {
+      allTime: Array.isArray(data.allTime) ? data.allTime.map(mapEntry) : [],
+      hotStreak: Array.isArray(data.hotStreak) ? data.hotStreak.map(mapEntry) : [],
+    }
+  } catch (error) {
+    console.error('Failed to read global leaderboard:', error)
+    return {
+      allTime: [],
+      hotStreak: [],
+    }
   }
 }
 
