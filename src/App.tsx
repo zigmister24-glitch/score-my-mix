@@ -19,8 +19,6 @@ type LeaderboardEntry = {
   normalizedTitle: string
 }
 
-const LEADERBOARD_KEY = 'score-my-mix-leaderboard'
-
 function stripExtension(name: string) {
   return name.replace(/\.[^.]+$/, '')
 }
@@ -69,6 +67,38 @@ function inferTrackIdentity(file: File) {
   }
 }
 
+type LeaderboardResponse = {
+  ok: boolean
+  error?: string
+  status?: 'new_entry' | 'improved' | 'retained'
+  allTime?: any[]
+  hotStreak?: any[]
+  madeAllTime?: boolean
+  madeHotStreak?: boolean
+  allTimeRank?: number | null
+  hotStreakRank?: number | null
+}
+
+function mapApiEntry(entry: any): LeaderboardEntry {
+  const displayName = entry.display_name || entry.displayName || entry.original_filename || entry.filename || 'Untitled'
+  return {
+    id: String(entry.id ?? `${displayName}-${entry.uploaded_at ?? ''}`),
+    artist: entry.artist ?? '',
+    title: entry.title ?? displayName,
+    displayName,
+    filename: entry.original_filename || entry.filename || '',
+    score: Math.round(Number(entry.score ?? 0)),
+    uploadedAt: entry.uploaded_at || entry.uploadedAt || new Date().toISOString(),
+    format: entry.format ?? '',
+    durationSeconds: Math.round(Number(entry.duration_seconds ?? entry.durationSeconds ?? 0)),
+    normalizedTitle: String(
+      entry.normalized_title ??
+      entry.normalizedTitle ??
+      normalizeTitle(displayName || entry.original_filename || entry.filename || '')
+    ),
+  }
+}
+
 async function readLeaderboard(): Promise<{
   allTime: LeaderboardEntry[]
   hotStreak: LeaderboardEntry[]
@@ -76,47 +106,53 @@ async function readLeaderboard(): Promise<{
   try {
     const res = await fetch('/api/leaderboard', {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
+      headers: { Accept: 'application/json' },
     })
 
-    const data = await res.json()
+    const data: LeaderboardResponse = await res.json()
 
     if (!res.ok || !data.ok) {
       throw new Error(data.error || 'Leaderboard load failed')
     }
 
-    const mapEntry = (entry: any): LeaderboardEntry => ({
-      ...entry,
-      title: entry.display_name || entry.displayName || entry.original_filename || entry.filename || 'Untitled',
-      displayName: entry.display_name || entry.displayName || entry.original_filename || entry.filename || 'Untitled',
-      filename: entry.original_filename || entry.filename || '',
-      score: Math.round(Number(entry.score ?? 0)),
-      durationSeconds: Math.round(Number(entry.duration_seconds ?? entry.durationSeconds ?? 0)),
-      normalizedTitle: String(
-        entry.normalized_title ??
-        entry.normalizedTitle ??
-        normalizeTitle(entry.display_name || entry.original_filename || entry.filename || '')
-      ),
-      uploadedAt: entry.uploaded_at || entry.uploadedAt || new Date().toISOString(),
-    })
-
     return {
-      allTime: Array.isArray(data.allTime) ? data.allTime.map(mapEntry) : [],
-      hotStreak: Array.isArray(data.hotStreak) ? data.hotStreak.map(mapEntry) : [],
+      allTime: Array.isArray(data.allTime) ? data.allTime.map(mapApiEntry) : [],
+      hotStreak: Array.isArray(data.hotStreak) ? data.hotStreak.map(mapApiEntry) : [],
     }
   } catch (error) {
     console.error('Failed to read global leaderboard:', error)
-    return {
-      allTime: [],
-      hotStreak: [],
-    }
+    return { allTime: [], hotStreak: [] }
   }
 }
 
-function writeLeaderboard(entries: LeaderboardEntry[]) {
-  window.localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(entries))
+async function submitLeaderboardEntry(entry: LeaderboardEntry): Promise<LeaderboardResponse | null> {
+  try {
+    const res = await fetch('/api/leaderboard', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        score: entry.score,
+        duration_seconds: entry.durationSeconds,
+        original_filename: entry.filename,
+        display_name: entry.displayName,
+        normalized_title: entry.normalizedTitle,
+      }),
+    })
+
+    const data: LeaderboardResponse = await res.json()
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || 'Leaderboard submit failed')
+    }
+
+    return data
+  } catch (error) {
+    console.error('Failed to submit global leaderboard entry:', error)
+    return null
+  }
 }
 
 function formatLeaderboardDate(iso: string) {
@@ -137,8 +173,10 @@ export default function App() {
   const [error, setError] = useState('')
   const [currentTime, setCurrentTime] = useState(0)
   const [trackPlaying, setTrackPlaying] = useState(false)
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(() => readLeaderboard())
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
+  const [leaderboardLast30, setLeaderboardLast30] = useState<LeaderboardEntry[]>([])
   const [leaderboardMessage, setLeaderboardMessage] = useState('')
+  const [leaderboardLoading, setLeaderboardLoading] = useState(true)
   const analysisRef = useRef<HTMLElement | null>(null)
   const waveformApiRef = useRef<WaveformHandle | null>(null)
 
@@ -157,6 +195,25 @@ export default function App() {
       if (fileUrl) URL.revokeObjectURL(fileUrl)
     }
   }, [fileUrl])
+
+  useEffect(() => {
+    let mounted = true
+
+    async function loadGlobalLeaderboard() {
+      setLeaderboardLoading(true)
+      const boards = await readLeaderboard()
+      if (!mounted) return
+      setLeaderboard(boards.allTime)
+      setLeaderboardLast30(boards.hotStreak)
+      setLeaderboardLoading(false)
+    }
+
+    loadGlobalLeaderboard()
+
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   useEffect(() => {
     if (!sections.length) return
@@ -217,54 +274,39 @@ export default function App() {
         normalizedTitle,
       }
 
-      const previousLeaderboard = readLeaderboard()
-      const previousMatch = previousLeaderboard.find((entry) => sameSong(entry, currentEntry)) ?? null
+      const leaderboardResult = await submitLeaderboardEntry(currentEntry)
 
-      const deduped = previousLeaderboard.filter((entry) => !sameSong(entry, currentEntry))
-      const effectiveEntry =
-        previousMatch && previousMatch.score > currentEntry.score
-          ? { ...previousMatch, uploadedAt: nowIso }
-          : {
-              ...(previousMatch ?? {}),
-              ...currentEntry,
-              id: previousMatch?.id ?? currentEntry.id,
-            }
+      if (leaderboardResult) {
+        const nextAllTime = Array.isArray(leaderboardResult.allTime)
+          ? leaderboardResult.allTime.map(mapApiEntry)
+          : []
+        const nextHotStreak = Array.isArray(leaderboardResult.hotStreak)
+          ? leaderboardResult.hotStreak.map(mapApiEntry)
+          : []
 
-      const nextLeaderboard = [effectiveEntry, ...deduped]
-        .sort((a, b) => b.score - a.score || +new Date(b.uploadedAt) - +new Date(a.uploadedAt))
-        .slice(0, 250)
+        setLeaderboard(nextAllTime)
+        setLeaderboardLast30(nextHotStreak)
 
-      writeLeaderboard(nextLeaderboard)
-      setLeaderboard(nextLeaderboard)
-
-      const nextAllTime = [...nextLeaderboard]
-        .sort((a, b) => b.score - a.score || +new Date(b.uploadedAt) - +new Date(a.uploadedAt))
-        .slice(0, 6)
-
-      const nextLast30 = nextLeaderboard
-        .filter((entry) => +new Date(entry.uploadedAt) >= Date.now() - 30 * 24 * 60 * 60 * 1000)
-        .sort((a, b) => b.score - a.score || +new Date(b.uploadedAt) - +new Date(a.uploadedAt))
-        .slice(0, 6)
-
-      const inAllTime = nextAllTime.some((entry) => sameSong(entry, effectiveEntry))
-      const inLast30 = nextLast30.some((entry) => sameSong(entry, effectiveEntry))
-      const allTimeRank = nextAllTime.findIndex((entry) => sameSong(entry, effectiveEntry)) + 1
-      const last30Rank = nextLast30.findIndex((entry) => sameSong(entry, effectiveEntry)) + 1
-
-      const messages: string[] = []
-      if (inAllTime) {
-        if (allTimeRank === 1) messages.push('New #1 All Time')
-        else if (!previousMatch) messages.push('Congrats. You made the Top 6 Mixing Legends')
-        else if (effectiveEntry.score > previousMatch.score) messages.push('Nice. You improved your All Time score')
-        else messages.push('Still in the Top 6 Mixing Legends')
+        const messages: string[] = []
+        if (leaderboardResult.madeAllTime) {
+          if (leaderboardResult.allTimeRank === 1) messages.push('Top of the Legends 🏆')
+          else if (leaderboardResult.status === 'improved') messages.push('Nice. You improved your Mixing Legends score')
+          else if (leaderboardResult.status === 'retained') messages.push('Still in the Top 6 Mixing Legends')
+          else messages.push('Congrats. You made the Top 6 Mixing Legends')
+        }
+        if (leaderboardResult.madeHotStreak) {
+          if (leaderboardResult.hotStreakRank === 1) messages.push('Hot Streak Leader 🔥')
+          else if (leaderboardResult.status === 'improved') messages.push('Nice. You improved your 30 Day Hot Streak score')
+          else if (leaderboardResult.status === 'retained') messages.push('Still in the Top 6 30 Day Hot Streak')
+          else messages.push('Congrats. You hit the Top 6 30 Day Hot Streak')
+        }
+        setLeaderboardMessage(messages.join(' • '))
+      } else {
+        const boards = await readLeaderboard()
+        setLeaderboard(boards.allTime)
+        setLeaderboardLast30(boards.hotStreak)
+        setLeaderboardMessage('Global leaderboard unavailable right now. Your mix still scored locally on this page.')
       }
-      if (inLast30) {
-        if (last30Rank === 1) messages.push('New #1 in the 30 Day Hot Streak')
-        else if (!previousMatch) messages.push('Congrats. You hit the Top 6 30 Day Hot Streak')
-        else if (effectiveEntry.score > previousMatch.score) messages.push('Nice. You improved your 30 Day Hot Streak score')
-        else messages.push('Still in the Top 6 30 Day Hot Streak')
-      }
-      setLeaderboardMessage(messages.join(' • '))
       setSections(nextSections)
       setActiveSectionId(nextSections[0]?.id ?? null)
       setActiveMetric('clarity')
@@ -379,9 +421,7 @@ export default function App() {
     .sort((a, b) => b.score - a.score || +new Date(b.uploadedAt) - +new Date(a.uploadedAt))
     .slice(0, 6)
 
-  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
-  const leaderboardLast30 = leaderboard
-    .filter((entry) => +new Date(entry.uploadedAt) >= thirtyDaysAgo)
+  const leaderboardHotStreak = [...leaderboardLast30]
     .sort((a, b) => b.score - a.score || +new Date(b.uploadedAt) - +new Date(a.uploadedAt))
     .slice(0, 6)
 
@@ -399,7 +439,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Score My Mix</h1>
-              <span className="version-pill">v0.25</span>
+              <span className="version-pill">v0.26</span>
             </div>
           </div>
 
@@ -429,7 +469,7 @@ export default function App() {
                 ))}
               </div>
             ) : (
-              <div className="leaderboard-empty compact">Upload a mix and the board will start tracking your best runs.</div>
+              <div className="leaderboard-empty compact">{leaderboardLoading ? 'Loading global leaderboard…' : 'Upload a mix and the board will start tracking your best runs.'}</div>
             )}
           </div>
 
@@ -438,9 +478,9 @@ export default function App() {
               <p className="eyebrow">Top 6 last 30 days</p>
               <span className="leaderboard-hint">Current hot streak</span>
             </div>
-            {leaderboardLast30.length ? (
+            {leaderboardHotStreak.length ? (
               <div className="leaderboard-inline-list">
-                {leaderboardLast30.map((entry, index) => (
+                {leaderboardHotStreak.map((entry, index) => (
                   <div className={`leaderboard-inline-row recent-row ${index === 0 ? 'is-hot' : ''}`} key={`${entry.id}-30`}>
                     <span className={`leaderboard-inline-rank recent ${index === 0 ? 'hot' : ''}`}>{`${index + 1}.`}</span>
                     <span className="leaderboard-inline-main">
@@ -450,7 +490,7 @@ export default function App() {
                 ))}
               </div>
             ) : (
-              <div className="leaderboard-empty compact">No scores in the last 30 days yet. First upload starts the streak.</div>
+              <div className="leaderboard-empty compact">{leaderboardLoading ? 'Loading global leaderboard…' : 'No scores in the last 30 days yet. First upload starts the streak.'}</div>
             )}
           </div>
         </div>
