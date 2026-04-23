@@ -260,6 +260,12 @@ export default function App() {
         return
       }
       const normalizedTitle = normalizeTitle(identity.title || file.name)
+      if (!normalizedTitle || normalizedTitle.length < 2) {
+        setError('That filename is too short or unclear for the global leaderboard. Rename it and try again.')
+        setIsLoading(false)
+        return
+      }
+
       const nowIso = new Date().toISOString()
       const currentEntry: LeaderboardEntry = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -439,7 +445,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Score My Mix</h1>
-              <span className="version-pill">v0.26</span>
+              <span className="version-pill">v0.27</span>
             </div>
           </div>
 
@@ -469,7 +475,7 @@ export default function App() {
                 ))}
               </div>
             ) : (
-              <div className="leaderboard-empty compact">{leaderboardLoading ? 'Loading global leaderboard…' : 'Upload a mix and the board will start tracking your best runs.'}</div>
+              <div className="leaderboard-empty compact">{leaderboardLoading ? 'Scanning the mix universe…' : 'Upload a mix and the board will start tracking your best runs.'}</div>
             )}
           </div>
 
@@ -490,7 +496,7 @@ export default function App() {
                 ))}
               </div>
             ) : (
-              <div className="leaderboard-empty compact">{leaderboardLoading ? 'Loading global leaderboard…' : 'No scores in the last 30 days yet. First upload starts the streak.'}</div>
+              <div className="leaderboard-empty compact">{leaderboardLoading ? 'Scanning the mix universe…' : 'No scores in the last 30 days yet. First upload starts the streak.'}</div>
             )}
           </div>
         </div>
@@ -507,7 +513,7 @@ export default function App() {
 
 
       {error && <div className="notice error">{error}</div>}
-      {isLoading && <div className="notice">Analysing upload and building the section map…</div>}
+      {isLoading && <div className="notice">Analysing upload, scoring sections, and syncing the global leaderboard…</div>}
 
       {sections.length > 0 && activeSection && (
         <>

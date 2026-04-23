@@ -1,43 +1,25 @@
-# Music Debugger POC
+# Mix Analyzer V4
 
-A very small local proof of concept for the "music debugger" idea.
+A clean V4 front-end scaffold for the WAV upload + section analysis workflow.
 
-## What it does
-- Upload a WAV mix
-- Runs a rough heuristic analysis
-- Returns:
-  - ranked **Fix First** issues
-  - ranked **Strengths**
-- Click any item to inspect why it was flagged and what to try next
+## Included in this revision
 
-## What it does **not** do yet
-- No real conversational chat under each issue yet
-- WAV only for now
-- No stems
-- No genre/intent selector
-- The analysis is deliberately broad-brush and heuristic-based
+- Drag-and-drop upload anywhere on screen
+- WAV playback with play/pause button
+- Waveform display using `wavesurfer.js`
+- Auto-detected change points for song sections
+- Colour-coded section heat map using time ranges only
+- Clickable Top moment and Next lift cards
+- Previous / Next section navigation inside the selected panel
+- Clickable score cards with plain-English explanations
+- Tonal balance score card and genre-aware note
+- Strengths surfaced alongside recommendations
 
-## Run locally
+## Install
 
 ```bash
-cd music_debugger_poc
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app:app --reload
+npm install
+npm run dev
 ```
 
-Then open:
-
-```text
-http://127.0.0.1:8000
-```
-
-## Notes
-This is built to prove the workflow, not to be sonically authoritative.
-The next upgrade would be:
-1. MP3/AIFF support
-2. per-issue chat
-3. genre/intent toggle
-4. section-aware analysis
-5. better feature extraction and reference-track comparison
+Then open the local URL shown by Vite.

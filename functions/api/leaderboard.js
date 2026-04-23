@@ -55,9 +55,15 @@ function findRank(rows, targetId) {
 
 export async function onRequestGet(context) {
   try {
+    console.log("[leaderboard] GET leaderboard");
     const boards = await getBoards(context.env.DB);
+    console.log("[leaderboard] GET ok", {
+      allTime: boards.allTime.length,
+      hotStreak: boards.hotStreak.length,
+    });
     return json({ ok: true, ...boards });
   } catch (error) {
+    console.error("[leaderboard] GET failed", error);
     return json({ ok: false, error: error.message }, 500);
   }
 }
@@ -81,9 +87,17 @@ export async function onRequestPost(context) {
       return json({ ok: false, error: "Invalid duration" }, 400);
     }
 
-    if (!normalizedTitle) {
+    if (!normalizedTitle || normalizedTitle.length < 2) {
+      console.warn("[leaderboard] rejected invalid title", { originalFilename, displayName, normalizedTitle });
       return json({ ok: false, error: "Invalid title" }, 400);
     }
+
+    console.log("[leaderboard] POST score received", {
+      displayName,
+      normalizedTitle,
+      duration,
+      score,
+    });
 
     const existing = await context.env.DB.prepare(`
       SELECT *
@@ -132,7 +146,7 @@ export async function onRequestPost(context) {
     const allTimeRank = findRank(boards.allTime, targetId);
     const hotStreakRank = findRank(boards.hotStreak, targetId);
 
-    return json({
+    const responsePayload = {
       ok: true,
       status,
       allTimeRank,
@@ -140,8 +154,20 @@ export async function onRequestPost(context) {
       madeAllTime: allTimeRank !== null && allTimeRank <= TOP_LIMIT,
       madeHotStreak: hotStreakRank !== null && hotStreakRank <= TOP_LIMIT,
       ...boards,
+    };
+
+    console.log("[leaderboard] POST saved", {
+      displayName,
+      status,
+      allTimeRank,
+      hotStreakRank,
+      madeAllTime: responsePayload.madeAllTime,
+      madeHotStreak: responsePayload.madeHotStreak,
     });
+
+    return json(responsePayload);
   } catch (error) {
+    console.error("[leaderboard] POST failed", error);
     return json({ ok: false, error: error.message }, 500);
   }
 }
