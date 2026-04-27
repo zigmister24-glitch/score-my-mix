@@ -50,6 +50,7 @@ export interface LevelBalanceStrip {
   drums: BalanceStripItem
   kick: BalanceStripItem
   snare: BalanceStripItem
+  cymbals: BalanceStripItem
 }
 
 export interface ImpactStrip extends BalanceStripItem {

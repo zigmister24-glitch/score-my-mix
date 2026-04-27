@@ -398,10 +398,44 @@ export default function App() {
     : metricRecommendations.filter((recommendation) => recommendation.priority === 'Worth exploring' || recommendation.priority === 'Optional polish')
   const displayedRecommendationMode = highImpactMetricRecommendations.length ? 'Top recommendations' : 'Worth exploring'
 
-  const widthMidSide = activeSection ? {
-    mid: Math.max(0, Math.min(100, Math.round(100 - activeSection.metrics.width * 0.62))),
-    side: Math.max(0, Math.min(100, Math.round(activeSection.metrics.width * 0.82))),
-  } : null
+  const makeLocalStripItem = (key: string, label: string, range: string, deviationPercent: number, action: string) => {
+    const rounded = Math.round(Math.max(-28, Math.min(28, deviationPercent)))
+    const abs = Math.abs(rounded)
+    const status = abs <= 8 ? 'good' : rounded < 0 ? 'low' : 'high'
+    const severity = abs <= 8 ? 'good' : abs <= 18 ? 'watch' : 'fix'
+    return { key, label, range, deviationPercent: rounded, status, severity, action }
+  }
+
+  const activeWidthBalance = useMemo(() => {
+    if (!activeSection) return []
+    const widthTarget = 76
+    const widthDeviation = Math.max(-28, Math.min(28, (widthTarget - activeSection.metrics.width) * 0.9))
+    return [
+      makeLocalStripItem('mid', 'Mid', 'Centre image', widthDeviation, widthDeviation > 8 ? 'The mix is leaning centre-heavy. Move guitars, pads, delays, or textures further out before widening the master bus.' : widthDeviation < -8 ? 'The centre may be getting hollow. Keep vocal, kick, bass, and snare firmly centred.' : 'Mid energy feels balanced. Protect the vocal, kick, bass, and snare in the centre.'),
+      makeLocalStripItem('side', 'Side', 'Stereo edges', -widthDeviation, widthDeviation > 8 ? 'Side energy is low. Add width with double-tracked guitars, stereo pads, or wider FX returns.' : widthDeviation < -8 ? 'Side energy is high. Pull back wide FX or check mono compatibility before adding more width.' : 'Side energy is sitting well. Keep the width moves subtle.'),
+    ]
+  }, [activeSection])
+
+  const activeMoodStrips = useMemo(() => {
+    if (!activeSection) return []
+    const bands = activeSection.tonalBalanceBands ?? []
+    const band = (key: string) => bands.find((item) => item.key === key)?.deviationPercent ?? 0
+    const weight = band('weight')
+    const body = band('body')
+    const core = band('core')
+    const air = band('air')
+    const clarityCrowd = Math.max(0, 88 - activeSection.metrics.clarity)
+    const brightness = air * 0.65 - weight * 0.25 + (activeSection.metrics.width - 76) * 0.12
+    const energy = (activeSection.metrics.impact - 78) * 0.72 + (activeSection.metrics.drumsVsEverything - 80) * 0.28
+    const density = clarityCrowd * 0.48 + body * 0.22 + core * 0.16 - 7
+    const coldness = air * 0.42 - body * 0.48 - weight * 0.16
+    return [
+      makeLocalStripItem('darkBright', 'Dark', 'Bright', brightness, 'Brightness is mainly driven by Air/top-end, width, and how much low weight is supporting it.'),
+      makeLocalStripItem('calmEnergetic', 'Calm', 'Energetic', energy, 'Energy is mainly driven by impact, drum confidence, transient motion, and section movement.'),
+      makeLocalStripItem('sparseDense', 'Sparse', 'Dense', density, 'Density rises when clarity drops or low-mid/mid elements start stacking together.'),
+      makeLocalStripItem('warmCold', 'Warm', 'Cold', coldness, 'Warmth/coldness is shaped by the low-mids against the top-end air and brightness.'),
+    ]
+  }, [activeSection])
 
   const activeTonalBands = useMemo(() => activeSection?.tonalBalanceBands ?? [], [activeSection])
 
@@ -433,7 +467,6 @@ export default function App() {
   const activeLevelBalance = useMemo(() => {
     if (!activeSection?.levelBalance) return null
     if (activeMetric === 'vocalLevel') return activeSection.levelBalance.vocals
-    if (activeMetric === 'drumsVsEverything') return activeSection.levelBalance.drums
     return null
   }, [activeSection, activeMetric])
 
@@ -530,7 +563,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.38</span>
+              <span className="version-pill">v0.39</span>
             </div>
           </div>
 
@@ -804,7 +837,7 @@ export default function App() {
                   {activeMetric === 'drumsVsEverything' && activeSection.levelBalance && (
                     <div className="drum-substrip-card">
                       <span className="mini-label">Drum detail</span>
-                      {[activeSection.levelBalance.kick, activeSection.levelBalance.snare].map((item) => {
+                      {[activeSection.levelBalance.kick, activeSection.levelBalance.snare, activeSection.levelBalance.cymbals].map((item) => {
                         const position = Math.max(6, Math.min(94, 50 + item.deviationPercent * 2.2))
                         const readout = item.status === 'good' ? 'Good' : `${Math.abs(item.deviationPercent)}% ${item.status}`
                         return (
@@ -846,21 +879,53 @@ export default function App() {
                       </div>
                     </div>
                   )}
-                  {activeMetric === 'width' && widthMidSide && (
-                    <div className="mid-side-panel">
-                      <div className="mid-side-copy">
-                        <strong>Mid vs Side heat map</strong>
-                        <span>{activeSection.metrics.width >= 74 ? 'Nice width without losing the centre.' : activeSection.metrics.width >= 62 ? 'Balanced, with room to open the sides if the song wants it.' : 'Mostly centred. Try subtle side energy before widening the whole mix.'}</span>
+                  {activeMetric === 'width' && activeWidthBalance.length > 0 && (
+                    <div className="level-balance-panel">
+                      <div className="tonal-strip-card">
+                        <strong>Mid / Side strip</strong>
+                        <div className="tonal-band-list">
+                          {activeWidthBalance.map((item) => {
+                            const position = Math.max(6, Math.min(94, 50 + item.deviationPercent * 2.2))
+                            const readout = item.status === 'good' ? 'Good' : `${Math.abs(item.deviationPercent)}% ${item.status === 'low' ? 'low' : 'high'}`
+                            return (
+                              <div className={`tonal-band-row tonal-${item.severity}`} key={item.key} title={item.action}>
+                                <span className="tonal-band-name">{item.label}<small>{item.range}</small></span>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                                <span className="tonal-readout">{readout}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
                       </div>
-                      <div className="mid-side-bars">
-                        <div>
-                          <span>Mid</span>
-                          <div className="heat-track"><div className="heat-fill mid-fill" style={{ width: `${widthMidSide.mid}%` }} /></div>
+                      <div className="tonal-action-card">
+                        <span className="mini-label">First move</span>
+                        <strong>{activeWidthBalance.find((item) => item.severity !== 'good')?.action ?? 'Width is sitting well. Protect the centre while keeping the edges alive.'}</strong>
+                        <p>{activeSection.metrics.width >= 74 ? 'The stereo field is already useful. Check mono compatibility before widening further.' : 'Start with arrangement width first: guitars, pads, delays, or FX returns before touching the master bus.'}</p>
+                      </div>
+                    </div>
+                  )}
+                  {activeMetric === 'mood' && activeMoodStrips.length > 0 && (
+                    <div className="level-balance-panel">
+                      <div className="tonal-strip-card">
+                        <strong>Mood character strips</strong>
+                        <div className="tonal-band-list">
+                          {activeMoodStrips.map((item) => {
+                            const position = Math.max(6, Math.min(94, 50 + item.deviationPercent * 2.2))
+                            const readout = item.status === 'good' ? 'Balanced' : item.status === 'low' ? item.label : item.range
+                            return (
+                              <div className={`tonal-band-row tonal-${item.severity}`} key={item.key} title={item.action}>
+                                <span className="tonal-band-name">{item.label}<small>{item.range}</small></span>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                                <span className="tonal-readout">{readout}</span>
+                              </div>
+                            )
+                          })}
                         </div>
-                        <div>
-                          <span>Side</span>
-                          <div className="heat-track"><div className="heat-fill side-fill" style={{ width: `${widthMidSide.side}%` }} /></div>
-                        </div>
+                      </div>
+                      <div className="tonal-action-card">
+                        <span className="mini-label">Character read</span>
+                        <strong>Use this as a feel mirror, not a fix list.</strong>
+                        <p>If the song is meant to feel dark but the strip leans Bright or Energetic, check Air, cymbals, density, and transient movement first.</p>
                       </div>
                     </div>
                   )}

@@ -249,12 +249,12 @@ function buildTonalBalanceBands(samples: Float32Array, sampleRate: number, start
   ]
 }
 
-function makeLevelBalanceItem(key: 'vocals' | 'drums' | 'kick' | 'snare', label: string, ratio: number, target: number): BalanceStripItem {
+function makeLevelBalanceItem(key: 'vocals' | 'drums' | 'kick' | 'snare' | 'cymbals', label: string, ratio: number, target: number): BalanceStripItem {
   const rawDeviation = ((ratio - target) / Math.max(0.0001, target)) * 100
   const deviationPercent = roundLevelDeviation(rawDeviation)
   const abs = Math.abs(deviationPercent)
-  const goodWindow = key === 'drums' ? 9 : key === 'kick' || key === 'snare' ? 10 : 8
-  const watchWindow = key === 'drums' ? 18 : key === 'kick' || key === 'snare' ? 20 : 14
+  const goodWindow = key === 'drums' ? 9 : key === 'kick' || key === 'snare' || key === 'cymbals' ? 10 : 8
+  const watchWindow = key === 'drums' ? 18 : key === 'kick' || key === 'snare' || key === 'cymbals' ? 20 : 14
   const status: BalanceStripItem['status'] = abs <= goodWindow ? 'good' : deviationPercent < 0 ? 'low' : 'high'
   const severity: BalanceStripItem['severity'] = abs <= goodWindow ? 'good' : abs <= watchWindow ? 'watch' : 'fix'
   const action = (() => {
@@ -262,6 +262,7 @@ function makeLevelBalanceItem(key: 'vocals' | 'drums' | 'kick' | 'snare', label:
     if (key === 'vocals') return status === 'low' ? 'Try +1 dB on the lead vocal first, then re-score before adding EQ.' : 'Try -1 dB on the lead vocal first, then check that the lyric still feels clear.'
     if (key === 'kick') return status === 'low' ? 'Try +1 dB kick, or add a small 60–90 Hz lift if the fader already feels right.' : 'Try -1 dB kick, or carve a little 60–90 Hz if it is eating the low end.'
     if (key === 'snare') return status === 'low' ? 'Try +1 dB snare or add a little attack around 2–5 kHz.' : 'Try -1 dB snare or soften 2–5 kHz if it is jumping out.'
+    if (key === 'cymbals') return status === 'low' ? 'Try +1 dB cymbals, hats, or overheads if the groove lacks top-end motion.' : 'Try -1 dB cymbals/hats or soften 6–10 kHz if the top end is pulling attention.'
     return status === 'low' ? 'Try +1 dB on the drum bus first, then re-score before adding compression.' : 'Try -1 dB on the drum bus first, then check whether the vocal and guitars glue better.'
   })()
   return { key, label, range: status === 'good' ? 'Level check' : status === 'low' ? 'Too quiet' : 'Too loud', deviationPercent, status, severity, action }
@@ -511,6 +512,7 @@ export function buildSections(buffer: AudioBuffer): SectionAnalysis[] {
       drums: makeLevelBalanceItem('drums', 'Drums', drumLevelRatio, drumLevelTarget),
       kick: makeLevelBalanceItem('kick', 'Kick', kickProxy, 0.26),
       snare: makeLevelBalanceItem('snare', 'Snare', snareProxy, 0.22),
+      cymbals: makeLevelBalanceItem('cymbals', 'Cymbals', snapEnergy / Math.max(0.0001, snapEnergy + vocalBand + midBody + lowPunch), 0.24),
       vocals: makeLevelBalanceItem('vocals', 'Vocals', vocalRatio, 0.42),
     }
     const mood = clamp(Math.round(tonalBalance * 0.24 + width * 0.14 + impact * 0.16 + drumsVsEverything * 0.1 + vocalLevel * 0.1 + 18), 48, 95)
