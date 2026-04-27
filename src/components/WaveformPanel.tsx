@@ -16,6 +16,7 @@ interface WaveformPanelProps {
 export interface WaveformHandle {
   seekToSection: (section: SectionAnalysis) => void
   playSection: (section: SectionAnalysis) => void
+  toggleTrack: () => Promise<void>
   pause: () => void
 }
 
@@ -41,7 +42,6 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
-
 
   useEffect(() => {
     if (!waveformRef.current || !fileUrl) return
@@ -99,27 +99,7 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
       setDuration(0)
       sectionPlaybackRef.current = null
     }
-  }, [fileUrl])
-
-  useImperativeHandle(ref, () => ({
-    seekToSection(section: SectionAnalysis) {
-      if (!waveSurferRef.current || duration === 0) return
-      sectionPlaybackRef.current = null
-      onSelectSection(section.id)
-      waveSurferRef.current.seekTo(section.start / duration)
-    },
-    playSection(section: SectionAnalysis) {
-      if (!waveSurferRef.current || duration === 0) return
-      onSelectSection(section.id)
-      sectionPlaybackRef.current = section.id
-      waveSurferRef.current.seekTo(section.start / duration)
-      setTimeout(() => { void waveSurferRef.current?.play() }, 0)
-    },
-    pause() {
-      waveSurferRef.current?.pause()
-      sectionPlaybackRef.current = null
-    },
-  }), [duration, onSelectSection])
+  }, [fileUrl, onPlayStateChange, onTimeChange, sections])
 
   const togglePlayback = async () => {
     if (!waveSurferRef.current) return
@@ -127,11 +107,55 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
     await waveSurferRef.current.playPause()
   }
 
+  const movePlayheadToSection = (section: SectionAnalysis) => {
+    if (!waveSurferRef.current || duration === 0) return
+    const safeStart = Math.min(section.end, section.start + 0.01)
+    setCurrentTime(safeStart)
+    onTimeChange?.(safeStart)
+    waveSurferRef.current.seekTo(safeStart / duration)
+  }
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || event.repeat) return
+      const target = event.target as HTMLElement | null
+      const tagName = target?.tagName.toLowerCase()
+      const isTyping = target?.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select' || tagName === 'button'
+      if (isTyping) return
+      event.preventDefault()
+      void togglePlayback()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [duration])
+
+  useImperativeHandle(ref, () => ({
+    seekToSection(section: SectionAnalysis) {
+      if (!waveSurferRef.current || duration === 0) return
+      sectionPlaybackRef.current = null
+      onSelectSection(section.id)
+      movePlayheadToSection(section)
+    },
+    playSection(section: SectionAnalysis) {
+      if (!waveSurferRef.current || duration === 0) return
+      onSelectSection(section.id)
+      sectionPlaybackRef.current = section.id
+      movePlayheadToSection(section)
+      setTimeout(() => { void waveSurferRef.current?.play() }, 0)
+    },
+    toggleTrack: togglePlayback,
+    pause() {
+      waveSurferRef.current?.pause()
+      sectionPlaybackRef.current = null
+    },
+  }), [duration, onSelectSection, onTimeChange])
+
   const jumpToSection = (section: SectionAnalysis) => {
     onSelectSection(section.id)
     if (!waveSurferRef.current || duration === 0) return
     sectionPlaybackRef.current = null
-    waveSurferRef.current.seekTo(section.start / duration)
+    movePlayheadToSection(section)
   }
 
   return (
@@ -139,7 +163,7 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
       <div className="panel-header spaced">
         <div>
           <p className="eyebrow">Track map</p>
-          <h2>{fileName || 'Uploaded WAV'}</h2>
+          <h2>{fileName || 'Uploaded audio'}</h2>
         </div>
         <div className="audio-controls">
           <button className="primary-button" onClick={togglePlayback} disabled={!fileUrl}>

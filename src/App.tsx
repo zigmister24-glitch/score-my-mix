@@ -4,7 +4,7 @@ import { buildSections, decodeAudioFile } from './lib/audioAnalysis'
 import { SectionAnalysis } from './lib/types'
 
 const ACCEPTED_TYPES = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac']
-const METRIC_ORDER: Array<keyof SectionAnalysis['metrics']> = ['clarity', 'impact', 'tonalBalance', 'width', 'mood']
+const METRIC_ORDER: Array<keyof SectionAnalysis['metrics']> = ['clarity', 'impact', 'tonalBalance', 'drumsVsEverything', 'vocalLevel', 'width', 'mood']
 
 type LeaderboardEntry = {
   id: string
@@ -109,9 +109,14 @@ async function readLeaderboard(): Promise<{
       headers: { Accept: 'application/json' },
     })
 
-    const data: LeaderboardResponse = await res.json()
+    if (!res.ok) {
+      throw new Error('Leaderboard load failed')
+    }
 
-    if (!res.ok || !data.ok) {
+    const text = await res.text()
+    const data: LeaderboardResponse = text ? JSON.parse(text) : { ok: false, error: 'Empty leaderboard response' }
+
+    if (!data.ok) {
       throw new Error(data.error || 'Leaderboard load failed')
     }
 
@@ -142,9 +147,14 @@ async function submitLeaderboardEntry(entry: LeaderboardEntry): Promise<Leaderbo
       }),
     })
 
-    const data: LeaderboardResponse = await res.json()
+    if (!res.ok) {
+      throw new Error('Leaderboard submit failed')
+    }
 
-    if (!res.ok || !data.ok) {
+    const text = await res.text()
+    const data: LeaderboardResponse = text ? JSON.parse(text) : { ok: false, error: 'Empty leaderboard response' }
+
+    if (!data.ok) {
       throw new Error(data.error || 'Leaderboard submit failed')
     }
 
@@ -153,6 +163,14 @@ async function submitLeaderboardEntry(entry: LeaderboardEntry): Promise<Leaderbo
     console.error('Failed to submit global leaderboard entry:', error)
     return null
   }
+}
+
+
+function metricLabel(name: keyof SectionAnalysis['metrics']) {
+  if (name === 'tonalBalance') return 'Tonal balance'
+  if (name === 'drumsVsEverything') return 'Drums'
+  if (name === 'vocalLevel') return 'Vocals'
+  return name.charAt(0).toUpperCase() + name.slice(1)
 }
 
 function formatLeaderboardDate(iso: string) {
@@ -358,6 +376,72 @@ export default function App() {
   const opportunitySection = sections.length ? [...sections].sort((a, b) => a.score - b.score)[0] : null
   const activeMetricInsight = activeSection ? activeSection.metricInsights[activeMetric] : null
 
+  const recommendationTargetsByMetric: Record<keyof SectionAnalysis['metrics'], string[]> = {
+    clarity: ['Overall mix', 'Instruments', 'Mix bus'],
+    impact: ['Drums', 'Drum balance', 'Mix bus', 'Overall mix'],
+    tonalBalance: ['Tonal balance', 'Overall mix'],
+    drumsVsEverything: ['Drums', 'Drum balance'],
+    vocalLevel: ['Vocal', 'Vocal level'],
+    width: ['Stereo field'],
+    mood: ['Overall mix', 'Mix bus', 'Instruments', 'Vocal'],
+  }
+
+  const metricRecommendations = useMemo(() => {
+    if (!activeSection) return []
+    const targets = recommendationTargetsByMetric[activeMetric]
+    return activeSection.recommendations.filter((recommendation) => targets.includes(recommendation.target))
+  }, [activeSection, activeMetric])
+
+  const highImpactMetricRecommendations = metricRecommendations.filter((recommendation) => recommendation.priority === 'High impact')
+  const displayedRecommendations = highImpactMetricRecommendations.length
+    ? highImpactMetricRecommendations
+    : metricRecommendations.filter((recommendation) => recommendation.priority === 'Worth exploring' || recommendation.priority === 'Optional polish')
+  const displayedRecommendationMode = highImpactMetricRecommendations.length ? 'Top recommendations' : 'Worth exploring'
+
+  const widthMidSide = activeSection ? {
+    mid: Math.max(0, Math.min(100, Math.round(100 - activeSection.metrics.width * 0.62))),
+    side: Math.max(0, Math.min(100, Math.round(activeSection.metrics.width * 0.82))),
+  } : null
+
+  const activeTonalBands = useMemo(() => activeSection?.tonalBalanceBands ?? [], [activeSection])
+
+  const tonalActionBand = useMemo(() => {
+    if (!activeTonalBands.length) return null
+
+    const severityRank = { fix: 3, watch: 2, good: 1 } as const
+    return [...activeTonalBands].sort((a, b) => {
+      const severityDelta = severityRank[b.severity] - severityRank[a.severity]
+      if (severityDelta) return severityDelta
+      return Math.abs(b.deviationPercent) - Math.abs(a.deviationPercent)
+    })[0]
+  }, [activeTonalBands])
+
+
+  const activeClarityBands = useMemo(() => activeSection?.clarityBands ?? [], [activeSection])
+
+  const clarityActionBand = useMemo(() => {
+    if (!activeClarityBands.length) return null
+
+    const severityRank = { fix: 3, watch: 2, good: 1 } as const
+    return [...activeClarityBands].sort((a, b) => {
+      const severityDelta = severityRank[b.severity] - severityRank[a.severity]
+      if (severityDelta) return severityDelta
+      return Math.abs(b.deviationPercent) - Math.abs(a.deviationPercent)
+    })[0]
+  }, [activeClarityBands])
+
+  const activeLevelBalance = useMemo(() => {
+    if (!activeSection?.levelBalance) return null
+    if (activeMetric === 'vocalLevel') return activeSection.levelBalance.vocals
+    if (activeMetric === 'drumsVsEverything') return activeSection.levelBalance.drums
+    return null
+  }, [activeSection, activeMetric])
+
+  const activeImpactBalance = useMemo(() => {
+    if (activeMetric !== 'impact') return null
+    return activeSection?.impactStrip ?? null
+  }, [activeSection, activeMetric])
+
   const goToSection = (index: number, mode: 'seek' | 'play' = 'seek') => {
     if (index < 0 || index >= sections.length) return
     const next = sections[index]
@@ -380,6 +464,7 @@ export default function App() {
   const scoreTone = (score: number) => {
     if (score >= 95) return 'legend'
     if (score >= 90) return 'elite'
+    if (score >= 85) return 'target'
     if (score >= 80) return 'strong'
     return 'standard'
   }
@@ -387,19 +472,19 @@ export default function App() {
   const scoreIcon = (score: number) => {
     if (score >= 95) return '🤯'
     if (score >= 90) return '🏆'
-    if (score >= 80) return '⭐'
+    if (score >= 85) return '⭐'
     return ''
   }
 
   const scoreLabel = (score: number) => {
-    if (score >= 95) return 'HOLY F@CK!!!'
-    if (score >= 90) return "Mean! That mix just grew a pair"
-    if (score >= 86) return "Mean bro. That shit's unreal!"
-    if (score >= 80) return 'Cuz! That mix kicks arse'
-    if (score >= 75) return "Chur bro! That's choice as!"
-    if (score >= 70) return "That's a sweet mix ow!"
-    if (score >= 60) return "That's not bad for a stink fullar"
-    return "C'mon bro... you can do better"
+    if (score >= 95) return 'HOLY F@CK!!! Alien Tech Achieved'
+    if (score >= 90) return "Certified Weapon"
+    if (score >= 86) return "Pro Tier - Chart Ready"
+    if (score >= 80) return 'Release Ready'
+    if (score >= 75) return "On the Rise"
+    if (score >= 70) return "Solid Foundation"
+    if (score >= 60) return "Taking Shape"
+    return "Rough Mix"
   }
 
   const selectedSectionScores = activeSection ? Object.values(activeSection.metrics) : []
@@ -408,8 +493,8 @@ export default function App() {
 
   const sectionSummary = allMetricScores.length
     ? [
-        { label: 'over 85%', count: allMetricScores.filter((score) => score >= 85).length },
-        { label: 'over 90%', count: allMetricScores.filter((score) => score >= 90).length },
+        { label: 'over 85%', count: allMetricScores.filter((score) => (score >= 85 && score <90)).length },
+        { label: 'over 90%', count: allMetricScores.filter((score) => (score >= 90 && score <95)).length },
         { label: 'over 95%', count: allMetricScores.filter((score) => score >= 95).length },
       ]
     : []
@@ -444,8 +529,8 @@ export default function App() {
           <div className="hero-brand hero-brand-compact hero-brand-left">
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
-              <h1>Score My Mix</h1>
-              <span className="version-pill">v0.27</span>
+              <h1>Mix Assistant</h1>
+              <span className="version-pill">v0.38</span>
             </div>
           </div>
 
@@ -466,7 +551,6 @@ export default function App() {
               <div className="leaderboard-inline-list">
                 {leaderboardAllTime.map((entry, index) => (
                   <div className={`leaderboard-inline-row ${index === 0 ? 'is-top' : ''}`} key={entry.id}>
-                    <span className={`leaderboard-inline-rank ${index === 0 ? 'champion' : ''}`}>{`${index + 1}.`}</span>
                     <span className="leaderboard-inline-main">
                       <strong>{entry.score}%</strong> {formatDuration(entry.durationSeconds)} - {entry.displayName}
                     </span>
@@ -488,7 +572,6 @@ export default function App() {
               <div className="leaderboard-inline-list">
                 {leaderboardHotStreak.map((entry, index) => (
                   <div className={`leaderboard-inline-row recent-row ${index === 0 ? 'is-hot' : ''}`} key={`${entry.id}-30`}>
-                    <span className={`leaderboard-inline-rank recent ${index === 0 ? 'hot' : ''}`}>{`${index + 1}.`}</span>
                     <span className="leaderboard-inline-main">
                       <strong>{entry.score}%</strong> {formatDuration(entry.durationSeconds)} - {entry.displayName}
                     </span>
@@ -624,9 +707,9 @@ export default function App() {
                       className={`metric-card clickable ${activeMetric === name ? 'active' : ''} ${scoreTone(value)}`}
                       onClick={() => setActiveMetric(name)}
                     >
-                      <span>{name === 'tonalBalance' ? 'Tonal balance' : name}</span>
+                      <span>{metricLabel(name)}</span>
                       <strong>{value}% {scoreIcon(value)}</strong>
-                      <div className="mini-bar"><div className="mini-bar-fill" style={{ width: `${value}%` }} /></div>
+                      <div className="mini-bar"><div className={`mini-bar-fill tone-${scoreTone(value)}`} style={{ width: `${value}%` }} /></div>
                     </button>
                   )
                 })}
@@ -635,41 +718,179 @@ export default function App() {
               {activeMetricInsight && (
                 <div className="metric-explainer">
                   <h3>{activeMetricInsight.title}</h3>
-                  <p><strong>What it means:</strong> {activeMetricInsight.meaning}</p>
-                  <p><strong>What affects it here:</strong> {activeMetricInsight.influencedBy}</p>
-                  <p><strong>Current read:</strong> {activeMetricInsight.currentRead}</p>
+                  {activeMetric === 'tonalBalance' && activeTonalBands.length > 0 && (
+                    <div className="tonal-balance-panel">
+                      <div className="tonal-strip-card">
+                        <strong>Tonal balance strip</strong>
+                        <div className="tonal-band-list">
+                          {activeTonalBands.map((band) => {
+                            const position = Math.max(6, Math.min(94, 50 + band.deviationPercent * 2.2))
+                            const readout = band.status === 'good' ? 'Good' : `${Math.abs(band.deviationPercent)}% ${band.status}`
+                            return (
+                              <button
+                                className={`tonal-band-row tonal-${band.severity}`}
+                                key={band.key}
+                                title={band.action}
+                              >
+                                <span className="tonal-band-name">{band.label}<small>{band.range}</small></span>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                                <span className="tonal-readout">{readout}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                      <div className="tonal-action-card">
+                        <span className="mini-label">First move</span>
+                        <strong>{tonalActionBand?.action}</strong>
+                        <p>{tonalActionBand?.status === 'good' ? 'No big tonal fire to put out here. Compare against your reference before tweaking.' : `Start with ${tonalActionBand?.label.toLowerCase()} only, then re-upload and check the score before changing another band.`}</p>
+                      </div>
+                    </div>
+                  )}
+                  {activeMetric === 'clarity' && activeClarityBands.length > 0 && (
+                    <div className="tonal-balance-panel">
+                      <div className="tonal-strip-card">
+                        <strong>Clarity clash strip</strong>
+                        <div className="tonal-band-list">
+                          {activeClarityBands.map((band) => {
+                            const position = Math.max(6, Math.min(94, 20 + band.deviationPercent * 2.6))
+                            const readout = band.status === 'good' ? 'Good' : `${Math.abs(band.deviationPercent)}% clash`
+                            return (
+                              <button
+                                className={`tonal-band-row tonal-${band.severity}`}
+                                key={band.key}
+                                title={band.action}
+                              >
+                                <span className="tonal-band-name">{band.label}<small>{band.range}</small></span>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                                <span className="tonal-readout">{readout}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                      <div className="tonal-action-card">
+                        <span className="mini-label">First move</span>
+                        <strong>{clarityActionBand?.action}</strong>
+                        <p>{clarityActionBand?.status === 'good' ? 'No obvious clarity clash here. Protect this balance while fixing bigger scorecards.' : `Start with ${clarityActionBand?.label.toLowerCase()} only, then re-upload before cutting another band.`}</p>
+                      </div>
+                    </div>
+                  )}
+                  {activeLevelBalance && (
+                    <div className="level-balance-panel">
+                      <div className="tonal-strip-card">
+                        <strong>{activeLevelBalance.label} level strip</strong>
+                        <div className="tonal-band-list">
+                          {(() => {
+                            const position = Math.max(6, Math.min(94, 50 + activeLevelBalance.deviationPercent * 2.2))
+                            const readout = activeLevelBalance.status === 'good' ? 'Good' : `${Math.abs(activeLevelBalance.deviationPercent)}% ${activeLevelBalance.status}`
+                            return (
+                              <div className={`tonal-band-row tonal-${activeLevelBalance.severity}`}>
+                                <span className="tonal-band-name">{activeLevelBalance.label}<small>{activeLevelBalance.range}</small></span>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                                <span className="tonal-readout">{readout}</span>
+                              </div>
+                            )
+                          })()}
+                        </div>
+                      </div>
+                      <div className="tonal-action-card">
+                        <span className="mini-label">First move</span>
+                        <strong>{activeLevelBalance.action}</strong>
+                        <p>{activeLevelBalance.status === 'good' ? 'No obvious fader fire here. Keep this level steady while you fix the bigger scorecards.' : 'Make this simple fader move first, re-upload, and only then chase compression or EQ.'}</p>
+                      </div>
+                    </div>
+                  )}
+                  {activeMetric === 'drumsVsEverything' && activeSection.levelBalance && (
+                    <div className="drum-substrip-card">
+                      <span className="mini-label">Drum detail</span>
+                      {[activeSection.levelBalance.kick, activeSection.levelBalance.snare].map((item) => {
+                        const position = Math.max(6, Math.min(94, 50 + item.deviationPercent * 2.2))
+                        const readout = item.status === 'good' ? 'Good' : `${Math.abs(item.deviationPercent)}% ${item.status}`
+                        return (
+                          <div className={`tonal-band-row tonal-${item.severity}`} key={item.key}>
+                            <span className="tonal-band-name">{item.label}<small>{item.range}</small></span>
+                            <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                            <span className="tonal-readout">{readout}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {activeImpactBalance && (
+                    <div className="level-balance-panel">
+                      <div className="tonal-strip-card">
+                        <strong>Impact strip</strong>
+                        <div className="tonal-band-list">
+                          {(() => {
+                            const position = Math.max(6, Math.min(94, 50 + activeImpactBalance.deviationPercent * 2.2))
+                            const readout = activeImpactBalance.status === 'good' ? 'Good' : `${Math.abs(activeImpactBalance.deviationPercent)}% ${activeImpactBalance.status === 'low' ? 'flat' : 'overcooked'}`
+                            return (
+                              <div className={`tonal-band-row tonal-${activeImpactBalance.severity}`}>
+                                <span className="tonal-band-name">{activeImpactBalance.label}<small>{activeImpactBalance.range}</small></span>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                                <span className="tonal-readout">{readout}</span>
+                              </div>
+                            )
+                          })()}
+                        </div>
+                        <div className="ear-check-card">
+                          <strong>Quick ear check</strong>
+                          <ul>{activeImpactBalance.earCheck.map((item) => <li key={item}>{item}</li>)}</ul>
+                        </div>
+                      </div>
+                      <div className="tonal-action-card">
+                        <span className="mini-label">First move</span>
+                        <strong>{activeImpactBalance.action}</strong>
+                        <p>{activeImpactBalance.status === 'good' ? 'Keep the section punch intact while fixing other scorecards.' : 'Make one contrast or punch move, then re-upload before chasing more loudness.'}</p>
+                      </div>
+                    </div>
+                  )}
+                  {activeMetric === 'width' && widthMidSide && (
+                    <div className="mid-side-panel">
+                      <div className="mid-side-copy">
+                        <strong>Mid vs Side heat map</strong>
+                        <span>{activeSection.metrics.width >= 74 ? 'Nice width without losing the centre.' : activeSection.metrics.width >= 62 ? 'Balanced, with room to open the sides if the song wants it.' : 'Mostly centred. Try subtle side energy before widening the whole mix.'}</span>
+                      </div>
+                      <div className="mid-side-bars">
+                        <div>
+                          <span>Mid</span>
+                          <div className="heat-track"><div className="heat-fill mid-fill" style={{ width: `${widthMidSide.mid}%` }} /></div>
+                        </div>
+                        <div>
+                          <span>Side</span>
+                          <div className="heat-track"><div className="heat-fill side-fill" style={{ width: `${widthMidSide.side}%` }} /></div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div className="metric-detail-copy">
+                    <p><strong>What it means:</strong> {activeMetricInsight.meaning}</p>
+                    <p><strong>What affects it here:</strong> {activeMetricInsight.influencedBy}</p>
+                    <p><strong>Current read:</strong> {activeMetricInsight.currentRead}</p>
+                  </div>
                 </div>
               )}
 
-              <div className="analysis-columns tighter-columns">
-                <section>
-                  <div className="highlight-title">What’s working well</div>
-                  <div className="list-stack">
-                    {activeSection.strengths.map((strength) => (
-                      <div className="info-card positive" key={strength.title}>
-                        <strong>{strength.title}</strong>
-                        <p>{strength.detail}</p>
-                      </div>
-                    ))}
+              <div className="recommendation-section">
+                <div className="recommendation-heading-row">
+                  <div className={`highlight-title ${displayedRecommendationMode === 'Top recommendations' ? 'accent-title' : 'explore-title'}`}>
+                    {displayedRecommendationMode} - {metricLabel(activeMetric)}
                   </div>
-                </section>
-
-                <section>
-                  <div className="highlight-title accent-title">Top recommendations</div>
-                  <div className="list-stack">
-                    {activeSection.recommendations.map((recommendation) => (
-                      <div className="info-card" key={recommendation.title}>
-                        <div className="recommendation-top">
-                          <span className={`priority priority-${recommendation.priority.toLowerCase().replace(/\s+/g, '-')}`}>{recommendation.priority}</span>
-                          <span className="lift">{recommendation.estimatedLift}</span>
-                        </div>
-                        <strong>{recommendation.title}</strong>
-                        <p>{recommendation.detail}</p>
-                        <p className="target-tag">Target: {recommendation.target}</p>
+                </div>
+                <div className="list-stack recommendation-grid">
+                  {displayedRecommendations.map((recommendation) => (
+                    <div className="info-card" key={recommendation.title}>
+                      <div className="recommendation-top">
+                        <span className={`priority priority-${recommendation.priority.toLowerCase().replace(/\s+/g, '-')}`}>{recommendation.priority}</span>
+                        <span className="lift">{recommendation.estimatedLift}</span>
                       </div>
-                    ))}
-                  </div>
-                </section>
+                      <strong>{recommendation.title}</strong>
+                      <p>{recommendation.detail}</p>
+                      <p className="target-tag">Target: {recommendation.target}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             </article>
           </section>

@@ -8,6 +8,8 @@ export type RecommendationTarget =
   | 'Stereo field'
   | 'Mix bus'
   | 'Tonal balance'
+  | 'Drum balance'
+  | 'Vocal level'
 
 export interface Recommendation {
   title: string
@@ -29,12 +31,40 @@ export interface MetricInsight {
   currentRead: string
 }
 
+export interface BalanceStripItem {
+  key: string
+  label: string
+  range: string
+  deviationPercent: number
+  status: 'low' | 'good' | 'high'
+  severity: 'good' | 'watch' | 'fix'
+  action: string
+}
+
+export interface TonalBalanceBand extends BalanceStripItem {
+  key: 'weight' | 'body' | 'core' | 'air'
+}
+
+export interface LevelBalanceStrip {
+  vocals: BalanceStripItem
+  drums: BalanceStripItem
+  kick: BalanceStripItem
+  snare: BalanceStripItem
+}
+
+export interface ImpactStrip extends BalanceStripItem {
+  earCheck: string[]
+}
+
+
 export interface SectionMetrics {
   clarity: number
   impact: number
   tonalBalance: number
   width: number
   mood: number
+  drumsVsEverything: number
+  vocalLevel: number
 }
 
 export interface SectionAnalysis {
@@ -50,4 +80,8 @@ export interface SectionAnalysis {
   recommendations: Recommendation[]
   metrics: SectionMetrics
   metricInsights: Record<keyof SectionMetrics, MetricInsight>
+  tonalBalanceBands?: TonalBalanceBand[]
+  clarityBands?: BalanceStripItem[]
+  levelBalance?: LevelBalanceStrip
+  impactStrip?: ImpactStrip
 }
