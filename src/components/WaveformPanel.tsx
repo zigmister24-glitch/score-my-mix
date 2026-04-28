@@ -23,8 +23,16 @@ export interface WaveformHandle {
 const scoreIcon = (score: number) => {
   if (score >= 95) return '🤯'
   if (score >= 90) return '🏆'
-  if (score >= 80) return '⭐'
+  if (score >= 85) return '⭐'
   return ''
+}
+
+const chipTone = (score: number) => {
+  if (score >= 95) return 'tone-legend'
+  if (score >= 90) return 'tone-elite'
+  if (score >= 85) return 'tone-target'
+  if (score >= 80) return 'tone-strong'
+  return 'tone-standard'
 }
 
 const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function WaveformPanel({
@@ -185,7 +193,7 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
             return (
               <button
                 key={section.id}
-                className={`section-chip ${isActive ? 'active' : ''} level-${section.highlightLevel}`}
+                className={`section-chip ${isActive ? 'active' : ''} level-${section.highlightLevel} ${chipTone(section.score)}`}
                 style={{ left, width, borderColor: isActive ? section.color : undefined }}
                 onClick={() => jumpToSection(section)}
               >

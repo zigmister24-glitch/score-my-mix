@@ -119,6 +119,7 @@ function getHighlightLevel(score: number): 0 | 1 | 2 | 3 | 4 {
 function scoreColor(score: number) {
   if (score >= 95) return '#b56cff'
   if (score >= 90) return '#d4a93a'
+  if (score >= 85) return '#60a5fa'
   if (score >= 80) return '#57e1ae'
   if (score >= 75) return '#60a5fa'
   return '#39435f'

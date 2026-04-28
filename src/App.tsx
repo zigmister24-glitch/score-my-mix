@@ -567,7 +567,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.44</span>
+              <span className="version-pill">v0.46</span>
             </div>
           </div>
 

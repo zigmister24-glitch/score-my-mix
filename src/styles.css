@@ -808,3 +808,28 @@ button, input { font: inherit; }
 .drum-substrip-card .mini-label { color: #93c5fd; font-size: 0.78rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.08em; }
 .ear-check-card strong { display: block; margin-bottom: 8px; }
 .ear-check-card ul { margin: 0; padding-left: 18px; color: #aebadb; line-height: 1.6; }
+
+
+/* v0.46 waveform section chip tone sync with scorecards */
+.section-chip.tone-standard { background: transparent; }
+.section-chip.tone-strong {
+  background: linear-gradient(180deg, rgba(87,225,174,0.24), rgba(15,23,42,0.14));
+  border-color: rgba(87,225,174,0.22);
+}
+.section-chip.tone-target {
+  background: linear-gradient(180deg, rgba(59,130,246,0.32), rgba(15,23,42,0.16));
+  border-color: rgba(59,130,246,0.42);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(147,197,253,0.08);
+}
+.section-chip.tone-elite {
+  background: linear-gradient(180deg, rgba(212,169,58,0.34), rgba(40,30,10,0.18));
+  border-color: rgba(212,169,58,0.66);
+  box-shadow: 0 10px 34px rgba(0,0,0,0.22), inset 0 0 0 1px rgba(255,223,128,0.08);
+}
+.section-chip.tone-legend {
+  background: linear-gradient(180deg, rgba(145,92,216,0.40), rgba(42,18,56,0.18));
+  border-color: rgba(255,94,184,0.68);
+  box-shadow: 0 12px 38px rgba(0,0,0,0.25), 0 0 18px rgba(255,94,184,0.12);
+}
+.section-chip.tone-target .chip-score { color: #eef6ff; }
+.section-chip.tone-strong .chip-score { color: #eafff7; }
