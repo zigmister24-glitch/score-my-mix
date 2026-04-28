@@ -85,4 +85,5 @@ export interface SectionAnalysis {
   clarityBands?: BalanceStripItem[]
   levelBalance?: LevelBalanceStrip
   impactStrip?: ImpactStrip
+  widthBands?: BalanceStripItem[]
 }

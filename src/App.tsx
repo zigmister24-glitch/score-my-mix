@@ -401,18 +401,22 @@ export default function App() {
   const makeLocalStripItem = (key: string, label: string, range: string, deviationPercent: number, action: string) => {
     const rounded = Math.round(Math.max(-28, Math.min(28, deviationPercent)))
     const abs = Math.abs(rounded)
-    const status = abs <= 8 ? 'good' : rounded < 0 ? 'low' : 'high'
-    const severity = abs <= 8 ? 'good' : abs <= 18 ? 'watch' : 'fix'
+    const status = abs <= 10 ? 'good' : rounded < 0 ? 'low' : 'high'
+    const severity = abs <= 10 ? 'good' : abs <= 20 ? 'watch' : 'fix'
     return { key, label, range, deviationPercent: rounded, status, severity, action }
   }
 
   const activeWidthBalance = useMemo(() => {
     if (!activeSection) return []
-    const widthTarget = 76
-    const widthDeviation = Math.max(-28, Math.min(28, (widthTarget - activeSection.metrics.width) * 0.9))
+    if (activeSection.widthBands?.length) return activeSection.widthBands
+
+    const widthTarget = 88
+    const sideDeviation = Math.max(-28, Math.min(28, (activeSection.metrics.width - widthTarget) * 0.8))
+    const middleDeviation = -sideDeviation
     return [
-      makeLocalStripItem('mid', 'Mid', 'Centre image', widthDeviation, widthDeviation > 8 ? 'The mix is leaning centre-heavy. Move guitars, pads, delays, or textures further out before widening the master bus.' : widthDeviation < -8 ? 'The centre may be getting hollow. Keep vocal, kick, bass, and snare firmly centred.' : 'Mid energy feels balanced. Protect the vocal, kick, bass, and snare in the centre.'),
-      makeLocalStripItem('side', 'Side', 'Stereo edges', -widthDeviation, widthDeviation > 8 ? 'Side energy is low. Add width with double-tracked guitars, stereo pads, or wider FX returns.' : widthDeviation < -8 ? 'Side energy is high. Pull back wide FX or check mono compatibility before adding more width.' : 'Side energy is sitting well. Keep the width moves subtle.'),
+      makeLocalStripItem('middle', 'Middle', 'Centre image', middleDeviation, middleDeviation > 10 ? 'The mix is leaning centre-heavy. Move guitars, pads, delays, or textures further out before widening the master bus.' : middleDeviation < -10 ? 'The centre may be getting hollow. Keep vocal, kick, bass, and snare firmly centred.' : 'Middle energy feels balanced. Protect the vocal, kick, bass, and snare in the centre.'),
+      makeLocalStripItem('side', 'Side', 'Stereo edges', sideDeviation, sideDeviation < -10 ? 'Side energy is low. Add width with double-tracked guitars, stereo pads, or wider FX returns.' : sideDeviation > 10 ? 'Side energy is high. Pull back wide FX or check mono compatibility before adding more width.' : 'Side energy is sitting well. Keep the width moves subtle.'),
+      makeLocalStripItem('amount', 'Width amount', 'Overall spread', sideDeviation, sideDeviation < -10 ? 'Overall width is a little narrow. Move supporting guitars, pads, delays, or FX wider first.' : sideDeviation > 10 ? 'Overall width may be too wide. Protect mono compatibility and keep the lead vocal, kick, bass, and snare anchored.' : 'Overall width amount is sitting well. Protect the centre and keep the edges alive.'),
     ]
   }, [activeSection])
 
@@ -428,12 +432,12 @@ export default function App() {
     const brightness = air * 0.65 - weight * 0.25 + (activeSection.metrics.width - 76) * 0.12
     const energy = (activeSection.metrics.impact - 78) * 0.72 + (activeSection.metrics.drumsVsEverything - 80) * 0.28
     const density = clarityCrowd * 0.48 + body * 0.22 + core * 0.16 - 7
-    const coldness = air * 0.42 - body * 0.48 - weight * 0.16
+    const warmth = body * 0.48 + weight * 0.16 - air * 0.42
     return [
-      makeLocalStripItem('darkBright', 'Dark', 'Bright', brightness, 'Brightness is mainly driven by Air/top-end, width, and how much low weight is supporting it.'),
-      makeLocalStripItem('calmEnergetic', 'Calm', 'Energetic', energy, 'Energy is mainly driven by impact, drum confidence, transient motion, and section movement.'),
-      makeLocalStripItem('sparseDense', 'Sparse', 'Dense', density, 'Density rises when clarity drops or low-mid/mid elements start stacking together.'),
-      makeLocalStripItem('warmCold', 'Warm', 'Cold', coldness, 'Warmth/coldness is shaped by the low-mids against the top-end air and brightness.'),
+      makeLocalStripItem('darkBright', 'Dark', '', brightness, 'Brightness is mainly driven by Air/top-end, width, and how much low weight is supporting it.'),
+      makeLocalStripItem('calmEnergetic', 'Calm', '', energy, 'Energy is mainly driven by impact, drum confidence, transient motion, and section movement.'),
+      makeLocalStripItem('sparseDense', 'Sparse', '', density, 'Density rises when clarity drops or low-mid/mid elements start stacking together.'),
+      makeLocalStripItem('warmCold', 'Cold', '', warmth, 'Warmth/coldness is shaped by the low-mids against the top-end air and brightness.'),
     ]
   }, [activeSection])
 
@@ -563,7 +567,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.39</span>
+              <span className="version-pill">v0.43</span>
             </div>
           </div>
 
@@ -882,7 +886,7 @@ export default function App() {
                   {activeMetric === 'width' && activeWidthBalance.length > 0 && (
                     <div className="level-balance-panel">
                       <div className="tonal-strip-card">
-                        <strong>Mid / Side strip</strong>
+                        <strong>Middle / Side / Width amount strip</strong>
                         <div className="tonal-band-list">
                           {activeWidthBalance.map((item) => {
                             const position = Math.max(6, Math.min(94, 50 + item.deviationPercent * 2.2))
@@ -900,7 +904,7 @@ export default function App() {
                       <div className="tonal-action-card">
                         <span className="mini-label">First move</span>
                         <strong>{activeWidthBalance.find((item) => item.severity !== 'good')?.action ?? 'Width is sitting well. Protect the centre while keeping the edges alive.'}</strong>
-                        <p>{activeSection.metrics.width >= 74 ? 'The stereo field is already useful. Check mono compatibility before widening further.' : 'Start with arrangement width first: guitars, pads, delays, or FX returns before touching the master bus.'}</p>
+                        <p>{activeWidthBalance.every((item) => item.severity === 'good') ? 'Middle, side, and overall width are all inside the good window. Check mono compatibility rather than pushing wider.' : 'Left means that part is low and usually needs more. Right means it is high and usually needs less.'}</p>
                       </div>
                     </div>
                   )}
@@ -911,7 +915,8 @@ export default function App() {
                         <div className="tonal-band-list">
                           {activeMoodStrips.map((item) => {
                             const position = Math.max(6, Math.min(94, 50 + item.deviationPercent * 2.2))
-                            const readout = item.status === 'good' ? 'Balanced' : item.status === 'low' ? item.label : item.range
+                            const endpointLabels: Record<string, string> = { darkBright: 'Bright', calmEnergetic: 'Energetic', sparseDense: 'Dense', warmCold: 'Warm' }
+                            const readout = endpointLabels[item.key] ?? item.label
                             return (
                               <div className={`tonal-band-row tonal-${item.severity}`} key={item.key} title={item.action}>
                                 <span className="tonal-band-name">{item.label}<small>{item.range}</small></span>

@@ -319,6 +319,46 @@ function makeClarityBand(key: string, label: string, range: string, blurPercent:
   return { key, label, range, deviationPercent: rounded, status, severity, action: finalAction }
 }
 
+
+function makeWidthBand(key: string, label: string, range: string, deviationPercentRaw: number, actionLow: string, actionHigh: string): BalanceStripItem {
+  const deviationPercent = Math.round(clamp(deviationPercentRaw, -32, 32))
+  const abs = Math.abs(deviationPercent)
+  const status: BalanceStripItem['status'] = abs <= 10 ? 'good' : deviationPercent < 0 ? 'low' : 'high'
+  const severity: BalanceStripItem['severity'] = abs <= 10 ? 'good' : abs <= 20 ? 'watch' : 'fix'
+  const action = status === 'good'
+    ? `${label} is sitting well. Protect it while fixing bigger scorecards.`
+    : status === 'low'
+      ? actionLow
+      : actionHigh
+  return { key, label, range, deviationPercent, status, severity, action }
+}
+
+function buildWidthBands(stereoWidth: number): BalanceStripItem[] {
+  // stereoWidth is side / (mid + side). Around 0.19 is a healthy rock/EDM centre-with-width target:
+  // centred enough for kick/bass/vocal, but wide enough for guitars, pads, delays and FX.
+  const targetSideShare = 0.19
+  const sideDeviation = ((stereoWidth - targetSideShare) / targetSideShare) * 100
+  const middleDeviation = -sideDeviation
+  return [
+    makeWidthBand('middle', 'Middle', 'Centre image', middleDeviation, 'The centre may be getting hollow. Keep vocal, kick, bass, and snare firmly centred.', 'The mix is leaning centre-heavy. Move guitars, pads, delays, or textures further out before widening the master bus.'),
+    makeWidthBand('side', 'Side', 'Stereo edges', sideDeviation, 'Side energy is low. Add width with double-tracked guitars, stereo pads, or wider FX returns.', 'Side energy is high. Pull back wide FX or check mono compatibility before adding more width.'),
+    makeWidthBand('amount', 'Width amount', 'Overall spread', sideDeviation, 'Overall width is a little narrow. Move supporting guitars, pads, delays, or FX wider first.', 'Overall width may be too wide. Protect mono compatibility and keep the lead vocal, kick, bass, and snare anchored.'),
+  ]
+}
+
+function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
+  const worst = Math.max(...widthBands.map((band) => Math.abs(band.deviationPercent)))
+  const offCount = widthBands.filter((band) => Math.abs(band.deviationPercent) > 10).length
+  const base = worst <= 10
+    ? 90
+    : worst <= 20
+      ? 85
+      : worst <= 30
+        ? 80
+        : 74 - (worst - 30) * 0.6
+  return clamp(Math.round(base - Math.max(0, offCount - 1) * 1), 62, 94)
+}
+
 function buildClarityBands(samples: Float32Array, sampleRate: number, startIndex: number, endIndex: number, transientEnergy: number, fullRms: number): BalanceStripItem[] {
   const weight = bandpassRms(samples, sampleRate, startIndex, endIndex, 70, 0.75)
   const body = bandpassRms(samples, sampleRate, startIndex, endIndex, 220, 0.85)
@@ -473,7 +513,8 @@ export function buildSections(buffer: AudioBuffer): SectionAnalysis[] {
           ? 84
           : 84 - ((tonalWorstDeviation - 30) * 1.1)
     const tonalBalance = clamp(Math.round(tonalBaseScore - Math.max(0, tonalWatchCount - 1) * 2 - tonalFixCount * 2), 62, 96)
-    const width = clamp(Math.round(52 + stereoWidth * 72), 38, 92)
+    const widthBands = buildWidthBands(stereoWidth)
+    const width = scoreWidthFromBands(widthBands)
     const lowPunch = bandpassRms(channel, sampleRate, startIndex, endIndex, 75, 0.9)
     const lowMidMask = bandpassRms(channel, sampleRate, startIndex, endIndex, 260, 0.85)
     const midBody = bandpassRms(channel, sampleRate, startIndex, endIndex, 1050, 0.85)
@@ -652,6 +693,7 @@ export function buildSections(buffer: AudioBuffer): SectionAnalysis[] {
       clarityBands,
       levelBalance,
       impactStrip,
+      widthBands,
     })
   }
 
