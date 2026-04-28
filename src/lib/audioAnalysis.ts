@@ -249,6 +249,8 @@ function buildTonalBalanceBands(samples: Float32Array, sampleRate: number, start
   ]
 }
 
+const VOCAL_LEVEL_TARGET_ROCK = 0.38
+
 function makeLevelBalanceItem(key: 'vocals' | 'drums' | 'kick' | 'snare' | 'cymbals', label: string, ratio: number, target: number): BalanceStripItem {
   const rawDeviation = ((ratio - target) / Math.max(0.0001, target)) * 100
   const deviationPercent = roundLevelDeviation(rawDeviation)
@@ -259,7 +261,12 @@ function makeLevelBalanceItem(key: 'vocals' | 'drums' | 'kick' | 'snare' | 'cymb
   const severity: BalanceStripItem['severity'] = abs <= goodWindow ? 'good' : abs <= watchWindow ? 'watch' : 'fix'
   const action = (() => {
     if (status === 'good') return `${label} level is in the pocket. Protect it while fixing bigger issues.`
-    if (key === 'vocals') return status === 'low' ? 'Try +1 dB on the lead vocal first, then re-score before adding EQ.' : 'Try -1 dB on the lead vocal first, then check that the lyric still feels clear.'
+    if (key === 'vocals') {
+      const move = abs >= 18 ? '2 dB' : '1 dB'
+      return status === 'low'
+        ? 'Try +' + move + ' on the lead vocal first, then re-score before adding EQ.'
+        : 'Try -' + move + ' on the lead vocal first, then check that the lyric still feels clear.'
+    }
     if (key === 'kick') return status === 'low' ? 'Try +1 dB kick, or add a small 60–90 Hz lift if the fader already feels right.' : 'Try -1 dB kick, or carve a little 60–90 Hz if it is eating the low end.'
     if (key === 'snare') return status === 'low' ? 'Try +1 dB snare or add a little attack around 2–5 kHz.' : 'Try -1 dB snare or soften 2–5 kHz if it is jumping out.'
     if (key === 'cymbals') return status === 'low' ? 'Try +1 dB cymbals, hats, or overheads if the groove lacks top-end motion.' : 'Try -1 dB cymbals/hats or soften 6–10 kHz if the top end is pulling attention.'
@@ -548,13 +555,13 @@ export function buildSections(buffer: AudioBuffer): SectionAnalysis[] {
     const drumLevelTarget = 0.42
     const vocalRatio = vocalBand / Math.max(0.0001, fullRms)
     const drumsVsEverything = scoreAroundTarget(drumLevelRatio, drumLevelTarget, 150, 40, 94)
-    const vocalLevel = scoreAroundTarget(vocalRatio, 0.42, 150, 40, 94)
+    const vocalLevel = scoreAroundTarget(vocalRatio, VOCAL_LEVEL_TARGET_ROCK, 150, 40, 94)
     const levelBalance = {
       drums: makeLevelBalanceItem('drums', 'Drums', drumLevelRatio, drumLevelTarget),
       kick: makeLevelBalanceItem('kick', 'Kick', kickProxy, 0.26),
       snare: makeLevelBalanceItem('snare', 'Snare', snareProxy, 0.22),
       cymbals: makeLevelBalanceItem('cymbals', 'Cymbals', snapEnergy / Math.max(0.0001, snapEnergy + vocalBand + midBody + lowPunch), 0.24),
-      vocals: makeLevelBalanceItem('vocals', 'Vocals', vocalRatio, 0.42),
+      vocals: makeLevelBalanceItem('vocals', 'Vocals', vocalRatio, VOCAL_LEVEL_TARGET_ROCK),
     }
     const mood = clamp(Math.round(tonalBalance * 0.24 + width * 0.14 + impact * 0.16 + drumsVsEverything * 0.1 + vocalLevel * 0.1 + 18), 48, 95)
     const metrics = { clarity, impact, tonalBalance, width, mood, drumsVsEverything, vocalLevel }
@@ -610,17 +617,17 @@ export function buildSections(buffer: AudioBuffer): SectionAnalysis[] {
             target: 'Drums',
           },
       vocalLevel < 80
-        ? vocalRatio < 0.42
+        ? vocalRatio < VOCAL_LEVEL_TARGET_ROCK
           ? {
-              title: 'Try +1 dB on the vocal first',
-              detail: 'Start simple: lift the lead vocal by about +1 dB and re-score. If it still feels tucked away, automate only the buried words before reaching for EQ.',
+              title: vocalLevel < 72 ? 'Try +2 dB on the vocal first' : 'Try +1 dB on the vocal first',
+              detail: vocalLevel < 72 ? 'Start simple: lift the lead vocal by about +2 dB and re-score. If it still feels tucked away, automate only the buried words before reaching for EQ.' : 'Start simple: lift the lead vocal by about +1 dB and re-score. If it still feels tucked away, automate only the buried words before reaching for EQ.',
               priority: vocalLevel < 72 ? 'High impact' : 'Worth exploring',
               estimatedLift: vocalLevel < 72 ? '+4 to +9 vocal balance' : '+2 to +5 vocal balance',
               target: 'Vocal level',
             }
           : {
-              title: 'Try -1 dB on the vocal first',
-              detail: 'The vocal may be a touch too forward. Pull it down by about -1 dB, then check whether the track feels more glued together without losing the lyric.',
+              title: vocalLevel < 72 ? 'Try -2 dB on the vocal first' : 'Try -1 dB on the vocal first',
+              detail: vocalLevel < 72 ? 'The vocal is likely too forward for a rock reference. Pull it down by about -2 dB, then check whether the track feels more glued together without losing the lyric.' : 'The vocal may be a touch too forward. Pull it down by about -1 dB, then check whether the track feels more glued together without losing the lyric.',
               priority: vocalLevel < 72 ? 'High impact' : 'Worth exploring',
               estimatedLift: vocalLevel < 72 ? '+3 to +7 vocal balance' : '+2 to +5 vocal balance',
               target: 'Vocal level',
