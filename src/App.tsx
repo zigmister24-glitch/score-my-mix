@@ -4,7 +4,7 @@ import { buildSections, decodeAudioFile } from './lib/audioAnalysis'
 import { SectionAnalysis } from './lib/types'
 
 const ACCEPTED_TYPES = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac']
-const METRIC_ORDER: Array<keyof SectionAnalysis['metrics']> = ['clarity', 'impact', 'tonalBalance', 'drumsVsEverything', 'vocalLevel', 'width', 'mood']
+const METRIC_ORDER: Array<keyof SectionAnalysis['metrics']> = ['clarity', 'impact', 'tonalBalance', 'vocalLevel', 'width', 'mood']
 
 type LeaderboardEntry = {
   id: string
