@@ -268,12 +268,12 @@ export default function App() {
         : 0
       const identity = inferTrackIdentity(file)
       const durationSeconds = Math.round(buffer.duration || 0)
-      if (durationSeconds < 60 || durationSeconds > 600) {
+      if (durationSeconds < 60 || durationSeconds > 900) {
         if (fileUrl) URL.revokeObjectURL(fileUrl)
         URL.revokeObjectURL(nextUrl)
         setFileUrl(null)
         setFileName('')
-        setError('Uploads need to be between 1 and 10 minutes long.')
+        setError('Uploads need to be between 1 and 15 minutes long.')
         setIsLoading(false)
         return
       }
