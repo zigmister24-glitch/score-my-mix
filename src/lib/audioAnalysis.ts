@@ -277,24 +277,36 @@ function makeLevelBalanceItem(key: 'vocals' | 'drums' | 'kick' | 'snare' | 'cymb
 }
 
 function makeImpactStrip(score: number, contrast: number, transientStrength: number, movement: number): ImpactStrip {
+  // Impact is a lift meter, not a punishment meter.
+  // Left means the section may feel flat. Right means the section is lifting harder.
+  // Only the far-right edge is treated as potentially fatiguing.
   const flatness = clamp(((78 - score) / 78) * 100, 0, 34)
-  const overcooked = clamp(((score - 91) / 9) * 100, 0, 24)
-  const rawDeviation = overcooked > 4 ? overcooked : -flatness
-  const deviationPercent = Math.round(clamp(rawDeviation, -34, 24))
+  const lift = clamp(((score - 82) / 18) * 34, 0, 34)
+  const rawDeviation = lift > 2 ? lift : -flatness
+  const deviationPercent = Math.round(clamp(rawDeviation, -34, 34))
   const abs = Math.abs(deviationPercent)
   const status: ImpactStrip['status'] = abs <= 8 ? 'good' : deviationPercent < 0 ? 'low' : 'high'
-  const severity: ImpactStrip['severity'] = abs <= 8 ? 'good' : abs <= 18 ? 'watch' : 'fix'
+  const severity: ImpactStrip['severity'] = status === 'low'
+    ? abs <= 18 ? 'watch' : 'fix'
+    : status === 'high'
+      ? abs <= 30 ? 'good' : 'watch'
+      : 'good'
   const action = status === 'good'
     ? 'Impact is sitting well. Keep the contrast and punch while fixing other scorecards.'
     : status === 'low'
       ? (transientStrength < movement ? 'Add transient shaping or a touch of parallel compression to the drums.' : 'Increase contrast into this section: trim the previous section slightly or add a downbeat hit.')
-      : 'Impact may be overcooked. Ease limiter/bus compression or soften the loudest drum attacks.'
+      : abs >= 31
+        ? 'Huge lift. Keep it if the section deserves it, but check that compression and limiting are not making it tiring.'
+        : 'Big lift. This section is arriving with energy. Protect the punch and make sure the previous section gives it room.'
   const earCheck = status === 'good'
     ? ['Does it hit cleanly?', 'Do drums punch through?', 'Does it hold its energy?']
     : status === 'low'
       ? ['Does it hit when it starts?', 'Do the drums feel soft?', 'Does the section feel flat?']
-      : ['Is the hit too aggressive?', 'Is compression flattening the groove?', 'Does it fatigue quickly?']
-  return { key: 'impact', label: 'Impact', range: status === 'good' ? 'Good' : status === 'low' ? 'Flat' : 'Overcooked', deviationPercent, status, severity, action, earCheck }
+      : abs >= 31
+        ? ['Does it still breathe?', 'Is the limiter flattening the groove?', 'Does it fatigue quickly?']
+        : ['Does the lift feel exciting?', 'Does the chorus feel bigger?', 'Does the groove still breathe?']
+  const range = status === 'low' ? 'Flat' : status === 'high' ? (abs >= 31 ? 'Huge lift' : 'Big lift') : 'Energetic'
+  return { key: 'impact', label: 'Impact', range, deviationPercent, status, severity, action, earCheck }
 }
 
 function primaryTonalRecommendation(bands: TonalBalanceBand[], tonalBalance: number): Recommendation {
@@ -342,29 +354,56 @@ function makeWidthBand(key: string, label: string, range: string, deviationPerce
 }
 
 function buildWidthBands(stereoWidth: number): BalanceStripItem[] {
-  // stereoWidth is side / (mid + side). Around 0.19 is a healthy rock/EDM centre-with-width target:
-  // centred enough for kick/bass/vocal, but wide enough for guitars, pads, delays and FX.
+  // stereoWidth is side / (mid + side). Wide sides are not automatically bad.
+  // The new scoring treats the centre as the anchor: strong side energy is rewarded
+  // as long as the middle does not collapse.
   const targetSideShare = 0.19
   const sideDeviation = ((stereoWidth - targetSideShare) / targetSideShare) * 100
   const middleDeviation = -sideDeviation
+
+  const middle = makeWidthBand('middle', 'Middle', 'Centre image', middleDeviation, 'The centre may be getting hollow. Keep vocal, kick, bass, and snare firmly centred.', 'The mix is leaning centre-heavy. Move guitars, pads, delays, or textures further out before widening the master bus.')
+
+  const makeWideFriendlyBand = (key: string, label: string, range: string): BalanceStripItem => {
+    const deviationPercent = Math.round(clamp(sideDeviation, -32, 32))
+    const abs = Math.abs(deviationPercent)
+    const status: BalanceStripItem['status'] = abs <= 10 ? 'good' : deviationPercent < 0 ? 'low' : 'high'
+    const severity: BalanceStripItem['severity'] = status === 'low'
+      ? abs <= 20 ? 'watch' : 'fix'
+      : status === 'high'
+        ? abs <= 36 ? 'good' : abs <= 52 ? 'watch' : 'fix'
+        : 'good'
+    const action = status === 'good'
+      ? `${label} is sitting well. Protect it while fixing bigger scorecards.`
+      : status === 'low'
+        ? key === 'side'
+          ? 'Side energy is low. Add width with double-tracked guitars, stereo pads, or wider FX returns.'
+          : 'Overall width is a little narrow. Move supporting guitars, pads, delays, or FX wider first.'
+        : key === 'side'
+          ? 'Side energy is wide. That can be excellent when the vocal, kick, bass, and snare still feel anchored in the middle.'
+          : 'Overall spread is wide. Keep the stereo magic, but strengthen the centre if the section feels hollow.'
+
+    return { key, label, range, deviationPercent, status, severity, action }
+  }
+
   return [
-    makeWidthBand('middle', 'Middle', 'Centre image', middleDeviation, 'The centre may be getting hollow. Keep vocal, kick, bass, and snare firmly centred.', 'The mix is leaning centre-heavy. Move guitars, pads, delays, or textures further out before widening the master bus.'),
-    makeWidthBand('side', 'Side', 'Stereo edges', sideDeviation, 'Side energy is low. Add width with double-tracked guitars, stereo pads, or wider FX returns.', 'Side energy is high. Pull back wide FX or check mono compatibility before adding more width.'),
-    makeWidthBand('amount', 'Width amount', 'Overall spread', sideDeviation, 'Overall width is a little narrow. Move supporting guitars, pads, delays, or FX wider first.', 'Overall width may be too wide. Protect mono compatibility and keep the lead vocal, kick, bass, and snare anchored.'),
+    middle,
+    makeWideFriendlyBand('side', 'Side', 'Stereo edges'),
+    makeWideFriendlyBand('amount', 'Width amount', 'Overall spread'),
   ]
 }
 
 function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
-  const worst = Math.max(...widthBands.map((band) => Math.abs(band.deviationPercent)))
-  const offCount = widthBands.filter((band) => Math.abs(band.deviationPercent) > 10).length
-  const base = worst <= 10
-    ? 90
-    : worst <= 20
-      ? 85
-      : worst <= 30
-        ? 80
-        : 74 - (worst - 30) * 0.6
-  return clamp(Math.round(base - Math.max(0, offCount - 1) * 1), 62, 94)
+  const middle = widthBands.find((band) => band.key === 'middle')
+  const side = widthBands.find((band) => band.key === 'side')
+  const middleDeviation = middle?.deviationPercent ?? 0
+  const sideDeviation = side?.deviationPercent ?? 0
+  const centrePenalty = Math.max(0, Math.abs(middleDeviation) - 10) * 0.45
+  const narrowPenalty = sideDeviation < -10 ? (Math.abs(sideDeviation) - 10) * 0.85 : 0
+  const tastefulWideBonus = sideDeviation > 10 && Math.abs(middleDeviation) <= 22
+    ? Math.min(4, (sideDeviation - 10) * 0.12)
+    : 0
+  const tooWidePenalty = sideDeviation > 42 ? (sideDeviation - 42) * 0.4 : 0
+  return clamp(Math.round(96 - centrePenalty - narrowPenalty - tooWidePenalty + tastefulWideBonus), 62, 98)
 }
 
 function buildClarityBands(samples: Float32Array, sampleRate: number, startIndex: number, endIndex: number, transientEnergy: number, fullRms: number): BalanceStripItem[] {
@@ -547,7 +586,7 @@ export function buildSections(buffer: AudioBuffer): SectionAnalysis[] {
     const drumLevelTarget = 0.42
     const vocalRatio = vocalBand / Math.max(0.0001, fullRms)
     const drumsVsEverything = scoreAroundTarget(drumLevelRatio, drumLevelTarget, 150, 40, 94)
-    const vocalLevel = scoreAroundTarget(vocalRatio, VOCAL_LEVEL_TARGET_ROCK, 150, 40, 94)
+    const vocalLevel = scoreAroundTarget(vocalRatio, VOCAL_LEVEL_TARGET_ROCK, 150, 40, 100)
     const levelBalance = {
       drums: makeLevelBalanceItem('drums', 'Drums', drumLevelRatio, drumLevelTarget),
       kick: makeLevelBalanceItem('kick', 'Kick', kickProxy, 0.26),

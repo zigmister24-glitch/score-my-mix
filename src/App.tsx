@@ -39,6 +39,140 @@ function formatDuration(seconds: number) {
   return `${mins}:${String(secs).padStart(2, '0')}`
 }
 
+function cleanTagValue(value: string) {
+  return value
+    .replace(/\0/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function decodeSyncSafeInteger(bytes: Uint8Array) {
+  return ((bytes[0] & 0x7f) << 21) | ((bytes[1] & 0x7f) << 14) | ((bytes[2] & 0x7f) << 7) | (bytes[3] & 0x7f)
+}
+
+function decodeFrameSize(bytes: Uint8Array, version: number) {
+  if (version === 4) return decodeSyncSafeInteger(bytes)
+  return (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]
+}
+
+function decodeId3TextFrame(bytes: Uint8Array) {
+  if (!bytes.length) return ''
+  const encoding = bytes[0]
+  const payload = bytes.slice(1)
+
+  try {
+    if (encoding === 1 || encoding === 2) {
+      const littleEndian = encoding === 1 && payload[0] === 0xff && payload[1] === 0xfe
+      const start = encoding === 1 && (payload[0] === 0xff || payload[0] === 0xfe) ? 2 : 0
+      const values: number[] = []
+      for (let i = start; i + 1 < payload.length; i += 2) {
+        const code = littleEndian ? payload[i] | (payload[i + 1] << 8) : (payload[i] << 8) | payload[i + 1]
+        if (code === 0) break
+        values.push(code)
+      }
+      return cleanTagValue(String.fromCharCode(...values))
+    }
+
+    const decoder = new TextDecoder(encoding === 3 ? 'utf-8' : 'iso-8859-1')
+    return cleanTagValue(decoder.decode(payload))
+  } catch {
+    return ''
+  }
+}
+
+async function readMp3Metadata(file: File): Promise<{ title?: string; artist?: string }> {
+  if (!/\.mp3$/i.test(file.name) && !/audio\/(mpeg|mp3)/i.test(file.type)) return {}
+
+  const headerBuffer = await file.slice(0, 10).arrayBuffer()
+  const header = new Uint8Array(headerBuffer)
+  if (header.length < 10 || header[0] !== 0x49 || header[1] !== 0x44 || header[2] !== 0x33) return {}
+
+  const version = header[3]
+  const tagSize = decodeSyncSafeInteger(header.slice(6, 10))
+  if (!tagSize || tagSize < 10) return {}
+
+  const maxRead = Math.min(file.size, 10 + tagSize, 1024 * 1024)
+  const tag = new Uint8Array(await file.slice(0, maxRead).arrayBuffer())
+  const result: { title?: string; artist?: string } = {}
+  let offset = 10
+
+  while (offset + 10 <= tag.length) {
+    const frameId = String.fromCharCode(tag[offset], tag[offset + 1], tag[offset + 2], tag[offset + 3])
+    if (!/^[A-Z0-9]{4}$/.test(frameId)) break
+
+    const frameSize = decodeFrameSize(tag.slice(offset + 4, offset + 8), version)
+    if (!frameSize || offset + 10 + frameSize > tag.length) break
+
+    const frameData = tag.slice(offset + 10, offset + 10 + frameSize)
+    if (frameId === 'TIT2') result.title = decodeId3TextFrame(frameData)
+    if (frameId === 'TPE1' || (!result.artist && frameId === 'TPE2')) result.artist = decodeId3TextFrame(frameData)
+
+    if (result.title && result.artist) break
+    offset += 10 + frameSize
+  }
+
+  return result
+}
+
+function buildTrackIdentity(title: string, artist: string, filename: string) {
+  const cleanTitleValue = cleanTagValue(title)
+  const cleanArtistValue = cleanTagValue(artist)
+  const fallback = stripExtension(filename).replace(/[_]+/g, ' ').trim()
+
+  if (cleanTitleValue && cleanArtistValue) {
+    return {
+      artist: cleanArtistValue,
+      title: cleanTitleValue,
+      displayName: `${cleanTitleValue} - ${cleanArtistValue}`,
+    }
+  }
+
+  if (cleanTitleValue) {
+    return {
+      artist: '',
+      title: cleanTitleValue,
+      displayName: cleanTitleValue,
+    }
+  }
+
+  return {
+    artist: '',
+    title: fallback,
+    displayName: fallback,
+  }
+}
+
+function impactReadout(item: ImpactStrip) {
+  const amount = Math.abs(item.deviationPercent)
+  if (item.status === 'low') return `${amount}% flat`
+  if (item.status === 'high') return amount >= 31 ? `${amount}% huge lift` : `${amount}% big lift`
+  return item.deviationPercent > 3 ? 'Energetic' : 'Good'
+}
+
+function widthReadout(item: BalanceStripItem) {
+  const value = item.deviationPercent
+  const amount = Math.abs(value)
+  if (item.key === 'middle') {
+    if (value < -20) return 'Centre-light'
+    if (value < -10) return 'Slightly centre-light'
+    if (value > 20) return 'Dense centre'
+    if (value > 10) return 'Strong centre'
+    return 'Balanced'
+  }
+  if (item.key === 'side') {
+    if (value < -20) return 'Narrow sides'
+    if (value < -10) return 'Controlled width'
+    if (value > 26) return 'Very wide'
+    if (value > 10) return 'Wide'
+    return 'Balanced'
+  }
+  if (value < -20) return 'Focused'
+  if (value < -10) return 'Tight'
+  if (value > 26) return 'Cinematic'
+  if (value > 10) return 'Spacious'
+  return 'Open'
+}
+
 function sameSong(a: Pick<LeaderboardEntry, 'normalizedTitle' | 'durationSeconds'>, b: Pick<LeaderboardEntry, 'normalizedTitle' | 'durationSeconds'>) {
   const durationClose =
     !a.durationSeconds ||
@@ -47,24 +181,21 @@ function sameSong(a: Pick<LeaderboardEntry, 'normalizedTitle' | 'durationSeconds
   return a.normalizedTitle === b.normalizedTitle && durationClose
 }
 
-function inferTrackIdentity(file: File) {
+async function inferTrackIdentity(file: File) {
+  const metadata = await readMp3Metadata(file)
+  if (metadata.title || metadata.artist) {
+    return buildTrackIdentity(metadata.title || '', metadata.artist || '', file.name)
+  }
+
   const raw = stripExtension(file.name).replace(/[_]+/g, ' ').trim()
   const dashMatch = raw.split(/\s+-\s+/)
   if (dashMatch.length >= 2) {
     const artist = dashMatch[0].trim()
     const title = dashMatch.slice(1).join(' - ').trim()
-    return {
-      artist,
-      title,
-      displayName: `${artist} - ${title}`,
-    }
+    return buildTrackIdentity(title, artist, file.name)
   }
 
-  return {
-    artist: '',
-    title: raw,
-    displayName: raw,
-  }
+  return buildTrackIdentity(raw, '', file.name)
 }
 
 type LeaderboardResponse = {
@@ -143,6 +274,8 @@ async function submitLeaderboardEntry(entry: LeaderboardEntry): Promise<Leaderbo
         duration_seconds: entry.durationSeconds,
         original_filename: entry.filename,
         display_name: entry.displayName,
+        artist: entry.artist,
+        title: entry.title,
         normalized_title: entry.normalizedTitle,
       }),
     })
@@ -266,7 +399,7 @@ export default function App() {
       const nextOverallScore = nextSections.length
         ? Math.round(nextSections.reduce((sum, section) => sum + section.score, 0) / nextSections.length)
         : 0
-      const identity = inferTrackIdentity(file)
+      const identity = await inferTrackIdentity(file)
       const durationSeconds = Math.round(buffer.duration || 0)
       if (durationSeconds < 60 || durationSeconds > 900) {
         if (fileUrl) URL.revokeObjectURL(fileUrl)
@@ -277,7 +410,7 @@ export default function App() {
         setIsLoading(false)
         return
       }
-      const normalizedTitle = normalizeTitle(identity.title || file.name)
+      const normalizedTitle = normalizeTitle(identity.displayName || identity.title || file.name)
       if (!normalizedTitle || normalizedTitle.length < 2) {
         setError('That filename is too short or unclear for the global leaderboard. Rename it and try again.')
         setIsLoading(false)
@@ -414,8 +547,8 @@ export default function App() {
     const middleDeviation = -sideDeviation
     return [
       makeLocalStripItem('middle', 'Middle', 'Centre image', middleDeviation, middleDeviation > 10 ? 'The mix is leaning centre-heavy. Move guitars, pads, delays, or textures further out before widening the master bus.' : middleDeviation < -10 ? 'The centre may be getting hollow. Keep vocal, kick, bass, and snare firmly centred.' : 'Middle energy feels balanced. Protect the vocal, kick, bass, and snare in the centre.'),
-      makeLocalStripItem('side', 'Side', 'Stereo edges', sideDeviation, sideDeviation < -10 ? 'Side energy is low. Add width with double-tracked guitars, stereo pads, or wider FX returns.' : sideDeviation > 10 ? 'Side energy is high. Pull back wide FX or check mono compatibility before adding more width.' : 'Side energy is sitting well. Keep the width moves subtle.'),
-      makeLocalStripItem('amount', 'Width amount', 'Overall spread', sideDeviation, sideDeviation < -10 ? 'Overall width is a little narrow. Move supporting guitars, pads, delays, or FX wider first.' : sideDeviation > 10 ? 'Overall width may be too wide. Protect mono compatibility and keep the lead vocal, kick, bass, and snare anchored.' : 'Overall width amount is sitting well. Protect the centre and keep the edges alive.'),
+      makeLocalStripItem('side', 'Side', 'Stereo edges', sideDeviation, sideDeviation < -10 ? 'Side energy is low. Add width with double-tracked guitars, stereo pads, or wider FX returns.' : sideDeviation > 10 ? 'Side energy is wide. That can be excellent when the vocal, kick, bass, and snare still feel anchored in the middle.' : 'Side energy is sitting well. Keep the width moves subtle.'),
+      makeLocalStripItem('amount', 'Width amount', 'Overall spread', sideDeviation, sideDeviation < -10 ? 'Overall width is a little narrow. Move supporting guitars, pads, delays, or FX wider first.' : sideDeviation > 10 ? 'Overall spread is wide. Keep the stereo magic, but strengthen the centre if the section feels hollow.' : 'Overall width amount is sitting well. Protect the centre and keep the edges alive.'),
     ]
   }, [activeSection])
 
@@ -545,14 +678,14 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.46</span>
+              <span className="version-pill">v0.47</span>
             </div>
           </div>
 
           <label className="upload-card upload-inline upload-inline-compact">
             <input type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/aac" onChange={onInputChange} hidden />
             <span className="upload-title">Click or drag to score your mix.</span>
-            <span className="upload-subtitle">Stereo WAV works best, but MP3 and M4A work too. Uploads must be 1 to 10 minutes long. 48k / 24-bit WAV is perfect.</span>
+            <span className="upload-subtitle">Stereo WAV works best, but MP3 and M4A work too. Uploads must be 1 to 15 minutes long. 48k / 24-bit WAV is perfect.</span>
           </label>
         </div>
 
@@ -604,7 +737,7 @@ export default function App() {
         <div className="drop-overlay">
           <div className="drop-overlay-card">
             <h2>Click or drag to score your mix.</h2>
-            <p>Stereo WAV works best, but MP3 and M4A work too. Uploads must be 1 to 10 minutes long. 48k / 24-bit WAV is perfect.</p>
+            <p>Stereo WAV works best, but MP3 and M4A work too. Uploads must be 1 to 15 minutes long. 48k / 24-bit WAV is perfect.</p>
           </div>
         </div>
       )}
@@ -768,7 +901,7 @@ export default function App() {
                         <strong>Clarity clash strip</strong>
                         <div className="tonal-band-list">
                           {activeClarityBands.map((band) => {
-                            const position = Math.max(6, Math.min(94, 20 + band.deviationPercent * 2.6))
+                            const position = band.status === 'good' ? 50 : Math.max(6, Math.min(94, 50 + band.deviationPercent * 2.2))
                             const readout = band.status === 'good' ? 'Good' : `${Math.abs(band.deviationPercent)}% clash`
                             return (
                               <button
@@ -839,7 +972,7 @@ export default function App() {
                         <div className="tonal-band-list">
                           {(() => {
                             const position = Math.max(6, Math.min(94, 50 + activeImpactBalance.deviationPercent * 2.2))
-                            const readout = activeImpactBalance.status === 'good' ? 'Good' : `${Math.abs(activeImpactBalance.deviationPercent)}% ${activeImpactBalance.status === 'low' ? 'flat' : 'overcooked'}`
+                            const readout = impactReadout(activeImpactBalance)
                             return (
                               <div className={`tonal-band-row tonal-${activeImpactBalance.severity}`}>
                                 <span className="tonal-band-name">{activeImpactBalance.label}<small>{activeImpactBalance.range}</small></span>
@@ -857,18 +990,18 @@ export default function App() {
                       <div className="tonal-action-card">
                         <span className="mini-label">First move</span>
                         <strong>{activeImpactBalance.action}</strong>
-                        <p>{activeImpactBalance.status === 'good' ? 'Keep the section punch intact while fixing other scorecards.' : 'Make one contrast or punch move, then re-upload before chasing more loudness.'}</p>
+                        <p>{activeImpactBalance.status === 'low' ? 'Make one contrast or punch move, then re-upload before chasing more loudness.' : activeImpactBalance.status === 'high' ? 'Right means more lift and arrival. Keep it when the section deserves it, then check that the groove still breathes.' : 'Keep the section punch intact while fixing other scorecards.'}</p>
                       </div>
                     </div>
                   )}
                   {activeMetric === 'width' && activeWidthBalance.length > 0 && (
                     <div className="level-balance-panel">
                       <div className="tonal-strip-card">
-                        <strong>Middle / Side / Width amount strip</strong>
+                        <strong>Centre / Sides / Space strip</strong>
                         <div className="tonal-band-list">
                           {activeWidthBalance.map((item) => {
                             const position = Math.max(6, Math.min(94, 50 + item.deviationPercent * 2.2))
-                            const readout = item.status === 'good' ? 'Good' : `${Math.abs(item.deviationPercent)}% ${item.status === 'low' ? 'low' : 'high'}`
+                            const readout = widthReadout(item)
                             return (
                               <div className={`tonal-band-row tonal-${item.severity}`} key={item.key} title={item.action}>
                                 <span className="tonal-band-name">{item.label}<small>{item.range}</small></span>
@@ -882,7 +1015,7 @@ export default function App() {
                       <div className="tonal-action-card">
                         <span className="mini-label">First move</span>
                         <strong>{activeWidthBalance.find((item) => item.severity !== 'good')?.action ?? 'Width is sitting well. Protect the centre while keeping the edges alive.'}</strong>
-                        <p>{activeWidthBalance.every((item) => item.severity === 'good') ? 'Middle, side, and overall width are all inside the good window. Check mono compatibility rather than pushing wider.' : 'Left means that part is low and usually needs more. Right means it is high and usually needs less.'}</p>
+                        <p>{activeWidthBalance.every((item) => item.severity === 'good') ? 'Centre, sides, and space are working together. Check mono compatibility rather than pushing wider by default.' : 'For width, right is often good: wide sides and spacious spread can be the magic. Only worry when the centre gets hollow or the section loses focus.'}</p>
                       </div>
                     </div>
                   )}

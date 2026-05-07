@@ -83,7 +83,7 @@ export async function onRequestPost(context) {
       return json({ ok: false, error: "Invalid score" }, 400);
     }
 
-    if (!Number.isFinite(duration) || duration < 60 || duration > 600) {
+    if (!Number.isFinite(duration) || duration < 60 || duration > 900) {
       return json({ ok: false, error: "Invalid duration" }, 400);
     }
 
