@@ -42,8 +42,15 @@ function formatDuration(seconds: number) {
 function cleanTagValue(value: string) {
   return value
     .replace(/\0/g, '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function normaliseArtistJoin(value: string) {
+  return cleanTagValue(value)
+    .replace(/\s*\/\s*/g, ' & ')
+    .replace(/\s*;\s*/g, ' & ')
 }
 
 function decodeSyncSafeInteger(bytes: Uint8Array) {
@@ -96,19 +103,38 @@ async function readMp3Metadata(file: File): Promise<{ title?: string; artist?: s
   const result: { title?: string; artist?: string } = {}
   let offset = 10
 
-  while (offset + 10 <= tag.length) {
-    const frameId = String.fromCharCode(tag[offset], tag[offset + 1], tag[offset + 2], tag[offset + 3])
-    if (!/^[A-Z0-9]{4}$/.test(frameId)) break
+  if (version === 2) {
+    while (offset + 6 <= tag.length) {
+      const frameId = String.fromCharCode(tag[offset], tag[offset + 1], tag[offset + 2])
+      if (!/^[A-Z0-9]{3}$/.test(frameId)) break
 
-    const frameSize = decodeFrameSize(tag.slice(offset + 4, offset + 8), version)
-    if (!frameSize || offset + 10 + frameSize > tag.length) break
+      const frameSize = (tag[offset + 3] << 16) | (tag[offset + 4] << 8) | tag[offset + 5]
+      if (!frameSize || offset + 6 + frameSize > tag.length) break
 
-    const frameData = tag.slice(offset + 10, offset + 10 + frameSize)
-    if (frameId === 'TIT2') result.title = decodeId3TextFrame(frameData)
-    if (frameId === 'TPE1' || (!result.artist && frameId === 'TPE2')) result.artist = decodeId3TextFrame(frameData)
+      const frameData = tag.slice(offset + 6, offset + 6 + frameSize)
+      if (frameId === 'TT2') result.title = decodeId3TextFrame(frameData)
+      if (frameId === 'TP1' || (!result.artist && frameId === 'TP2')) result.artist = normaliseArtistJoin(decodeId3TextFrame(frameData))
 
-    if (result.title && result.artist) break
-    offset += 10 + frameSize
+      if (result.title && result.artist) break
+      offset += 6 + frameSize
+    }
+  } else {
+    while (offset + 10 <= tag.length) {
+      const frameId = String.fromCharCode(tag[offset], tag[offset + 1], tag[offset + 2], tag[offset + 3])
+      if (!/^[A-Z0-9]{4}$/.test(frameId)) break
+
+      const frameSize = decodeFrameSize(tag.slice(offset + 4, offset + 8), version)
+      if (!frameSize || offset + 10 + frameSize > tag.length) break
+
+      const frameData = tag.slice(offset + 10, offset + 10 + frameSize)
+      if (frameId === 'TIT2') result.title = decodeId3TextFrame(frameData)
+      if (['TPE1', 'TPE2', 'TCOM'].includes(frameId) && !result.artist) {
+        result.artist = normaliseArtistJoin(decodeId3TextFrame(frameData))
+      }
+
+      if (result.title && result.artist) break
+      offset += 10 + frameSize
+    }
   }
 
   return result
@@ -116,7 +142,7 @@ async function readMp3Metadata(file: File): Promise<{ title?: string; artist?: s
 
 function buildTrackIdentity(title: string, artist: string, filename: string) {
   const cleanTitleValue = cleanTagValue(title)
-  const cleanArtistValue = cleanTagValue(artist)
+  const cleanArtistValue = normaliseArtistJoin(artist)
   const fallback = stripExtension(filename).replace(/[_]+/g, ' ').trim()
 
   if (cleanTitleValue && cleanArtistValue) {
@@ -140,6 +166,31 @@ function buildTrackIdentity(title: string, artist: string, filename: string) {
     title: fallback,
     displayName: fallback,
   }
+}
+
+function parseTrackIdentityFromFilename(filename: string) {
+  const raw = stripExtension(filename)
+    .replace(/[_]+/g, ' ')
+    .replace(/\s*\([^)]*(official|video|audio|lyrics?|visuali[sz]er|remaster|hd|4k)[^)]*\)\s*/gi, ' ')
+    .replace(/\s*\[[^\]]*(official|video|audio|lyrics?|visuali[sz]er|remaster|hd|4k)[^\]]*\]\s*/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const dashMatch = raw.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean)
+  if (dashMatch.length >= 2) {
+    const first = dashMatch[0]
+    const second = dashMatch.slice(1).join(' - ')
+
+    // Most downloaders use Artist - Title, but some user exports use Title - Artist.
+    // Prefer the side that looks more like multiple artists as the artist name.
+    const firstLooksLikeArtist = /(&|,|feat\.?|ft\.?| x | and )/i.test(first)
+    const secondLooksLikeArtist = /(&|,|feat\.?|ft\.?| x | and )/i.test(second)
+
+    if (secondLooksLikeArtist && !firstLooksLikeArtist) return buildTrackIdentity(first, second, filename)
+    return buildTrackIdentity(second, first, filename)
+  }
+
+  return buildTrackIdentity(raw, '', filename)
 }
 
 function impactReadout(item: ImpactStrip) {
@@ -183,19 +234,11 @@ function sameSong(a: Pick<LeaderboardEntry, 'normalizedTitle' | 'durationSeconds
 
 async function inferTrackIdentity(file: File) {
   const metadata = await readMp3Metadata(file)
-  if (metadata.title || metadata.artist) {
-    return buildTrackIdentity(metadata.title || '', metadata.artist || '', file.name)
-  }
+  const filenameIdentity = parseTrackIdentityFromFilename(file.name)
 
-  const raw = stripExtension(file.name).replace(/[_]+/g, ' ').trim()
-  const dashMatch = raw.split(/\s+-\s+/)
-  if (dashMatch.length >= 2) {
-    const artist = dashMatch[0].trim()
-    const title = dashMatch.slice(1).join(' - ').trim()
-    return buildTrackIdentity(title, artist, file.name)
-  }
-
-  return buildTrackIdentity(raw, '', file.name)
+  const title = cleanTagValue(metadata.title || '') || filenameIdentity.title
+  const artist = normaliseArtistJoin(metadata.artist || '') || filenameIdentity.artist
+  return buildTrackIdentity(title, artist, file.name)
 }
 
 type LeaderboardResponse = {
@@ -678,7 +721,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.47</span>
+              <span className="version-pill">v0.48</span>
             </div>
           </div>
 
