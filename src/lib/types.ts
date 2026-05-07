@@ -63,7 +63,6 @@ export interface SectionMetrics {
   impact: number
   tonalBalance: number
   width: number
-  mood: number
   drumsVsEverything: number
   vocalLevel: number
 }

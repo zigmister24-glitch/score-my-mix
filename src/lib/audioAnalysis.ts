@@ -471,15 +471,6 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
           ? 'This section feels nicely open without losing its center.'
           : 'There is room to open the stereo field a touch if that suits the song.',
     },
-    mood: {
-      title: 'Mood',
-      meaning: 'How cohesive and intentional the atmosphere feels in this section.',
-      influencedBy: 'Density, ambience, tonal consistency, and whether the section supports the emotional direction of the song.',
-      currentRead:
-        metrics.mood >= 80
-          ? 'The character of this section is one of its strengths. It already feels intentional.'
-          : 'The section is headed in a clear direction, but a little more contrast or focus could make the mood land harder.',
-    },
   }
 }
 
@@ -564,17 +555,13 @@ export function buildSections(buffer: AudioBuffer): SectionAnalysis[] {
       cymbals: makeLevelBalanceItem('cymbals', 'Cymbals', snapEnergy / Math.max(0.0001, snapEnergy + vocalBand + midBody + lowPunch), 0.24),
       vocals: makeLevelBalanceItem('vocals', 'Vocals', vocalRatio, VOCAL_LEVEL_TARGET_ROCK),
     }
-    const mood = clamp(Math.round(tonalBalance * 0.24 + width * 0.14 + impact * 0.16 + drumsVsEverything * 0.1 + vocalLevel * 0.1 + 18), 48, 95)
-    const metrics = { clarity, impact, tonalBalance, width, mood, drumsVsEverything, vocalLevel }
-    const score = Math.round((clarity + impact + tonalBalance + width + mood + drumsVsEverything + vocalLevel) / 7)
+    const metrics = { clarity, impact, tonalBalance, width, drumsVsEverything, vocalLevel }
+    const score = Math.round((clarity + impact + tonalBalance + width + drumsVsEverything + vocalLevel) / 6)
 
     const strengths = [
       {
-        title: 'Mood & density are working in your favour',
-        detail:
-          mood >= 80
-            ? 'This section feels cohesive and intentional, which is a real strength.'
-            : 'The atmosphere already feels like part of the song rather than a random accident.',
+        title: 'Density is working in your favour',
+        detail: 'The atmosphere already feels like part of the song rather than a random accident.',
       },
       {
         title: impact >= 74 ? 'Impact feels confident' : 'Dynamics feel controlled',

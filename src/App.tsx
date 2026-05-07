@@ -4,7 +4,7 @@ import { buildSections, decodeAudioFile } from './lib/audioAnalysis'
 import { SectionAnalysis } from './lib/types'
 
 const ACCEPTED_TYPES = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac']
-const METRIC_ORDER: Array<keyof SectionAnalysis['metrics']> = ['clarity', 'impact', 'tonalBalance', 'vocalLevel', 'width', 'mood']
+const METRIC_ORDER: Array<keyof SectionAnalysis['metrics']> = ['clarity', 'impact', 'tonalBalance', 'vocalLevel', 'width']
 
 type LeaderboardEntry = {
   id: string
@@ -383,7 +383,6 @@ export default function App() {
     drumsVsEverything: ['Drums', 'Drum balance'],
     vocalLevel: ['Vocal', 'Vocal level'],
     width: ['Stereo field'],
-    mood: ['Overall mix', 'Mix bus', 'Instruments', 'Vocal'],
   }
 
   const metricRecommendations = useMemo(() => {
@@ -417,27 +416,6 @@ export default function App() {
       makeLocalStripItem('middle', 'Middle', 'Centre image', middleDeviation, middleDeviation > 10 ? 'The mix is leaning centre-heavy. Move guitars, pads, delays, or textures further out before widening the master bus.' : middleDeviation < -10 ? 'The centre may be getting hollow. Keep vocal, kick, bass, and snare firmly centred.' : 'Middle energy feels balanced. Protect the vocal, kick, bass, and snare in the centre.'),
       makeLocalStripItem('side', 'Side', 'Stereo edges', sideDeviation, sideDeviation < -10 ? 'Side energy is low. Add width with double-tracked guitars, stereo pads, or wider FX returns.' : sideDeviation > 10 ? 'Side energy is high. Pull back wide FX or check mono compatibility before adding more width.' : 'Side energy is sitting well. Keep the width moves subtle.'),
       makeLocalStripItem('amount', 'Width amount', 'Overall spread', sideDeviation, sideDeviation < -10 ? 'Overall width is a little narrow. Move supporting guitars, pads, delays, or FX wider first.' : sideDeviation > 10 ? 'Overall width may be too wide. Protect mono compatibility and keep the lead vocal, kick, bass, and snare anchored.' : 'Overall width amount is sitting well. Protect the centre and keep the edges alive.'),
-    ]
-  }, [activeSection])
-
-  const activeMoodStrips = useMemo(() => {
-    if (!activeSection) return []
-    const bands = activeSection.tonalBalanceBands ?? []
-    const band = (key: string) => bands.find((item) => item.key === key)?.deviationPercent ?? 0
-    const weight = band('weight')
-    const body = band('body')
-    const core = band('core')
-    const air = band('air')
-    const clarityCrowd = Math.max(0, 88 - activeSection.metrics.clarity)
-    const brightness = air * 0.65 - weight * 0.25 + (activeSection.metrics.width - 76) * 0.12
-    const energy = (activeSection.metrics.impact - 78) * 0.72 + (activeSection.metrics.drumsVsEverything - 80) * 0.28
-    const density = clarityCrowd * 0.48 + body * 0.22 + core * 0.16 - 7
-    const warmth = body * 0.48 + weight * 0.16 - air * 0.42
-    return [
-      makeLocalStripItem('darkBright', 'Dark', '', brightness, 'Brightness is mainly driven by Air/top-end, width, and how much low weight is supporting it.'),
-      makeLocalStripItem('calmEnergetic', 'Calm', '', energy, 'Energy is mainly driven by impact, drum confidence, transient motion, and section movement.'),
-      makeLocalStripItem('sparseDense', 'Sparse', '', density, 'Density rises when clarity drops or low-mid/mid elements start stacking together.'),
-      makeLocalStripItem('warmCold', 'Cold', '', warmth, 'Warmth/coldness is shaped by the low-mids against the top-end air and brightness.'),
     ]
   }, [activeSection])
 
@@ -905,32 +883,6 @@ export default function App() {
                         <span className="mini-label">First move</span>
                         <strong>{activeWidthBalance.find((item) => item.severity !== 'good')?.action ?? 'Width is sitting well. Protect the centre while keeping the edges alive.'}</strong>
                         <p>{activeWidthBalance.every((item) => item.severity === 'good') ? 'Middle, side, and overall width are all inside the good window. Check mono compatibility rather than pushing wider.' : 'Left means that part is low and usually needs more. Right means it is high and usually needs less.'}</p>
-                      </div>
-                    </div>
-                  )}
-                  {activeMetric === 'mood' && activeMoodStrips.length > 0 && (
-                    <div className="level-balance-panel">
-                      <div className="tonal-strip-card">
-                        <strong>Mood character strips</strong>
-                        <div className="tonal-band-list">
-                          {activeMoodStrips.map((item) => {
-                            const position = Math.max(6, Math.min(94, 50 + item.deviationPercent * 2.2))
-                            const endpointLabels: Record<string, string> = { darkBright: 'Bright', calmEnergetic: 'Energetic', sparseDense: 'Dense', warmCold: 'Warm' }
-                            const readout = endpointLabels[item.key] ?? item.label
-                            return (
-                              <div className={`tonal-band-row tonal-${item.severity}`} key={item.key} title={item.action}>
-                                <span className="tonal-band-name">{item.label}<small>{item.range}</small></span>
-                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
-                                <span className="tonal-readout">{readout}</span>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                      <div className="tonal-action-card">
-                        <span className="mini-label">Character read</span>
-                        <strong>Use this as a feel mirror, not a fix list.</strong>
-                        <p>If the song is meant to feel dark but the strip leans Bright or Energetic, check Air, cymbals, density, and transient movement first.</p>
                       </div>
                     </div>
                   )}
