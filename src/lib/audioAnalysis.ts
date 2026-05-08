@@ -595,7 +595,11 @@ export function buildSections(buffer: AudioBuffer): SectionAnalysis[] {
       vocals: makeLevelBalanceItem('vocals', 'Vocals', vocalRatio, VOCAL_LEVEL_TARGET_ROCK),
     }
     const metrics = { clarity, impact, tonalBalance, width, drumsVsEverything, vocalLevel }
-    const score = Math.round((clarity + impact + tonalBalance + width + drumsVsEverything + vocalLevel) / 6)
+    // Match the overall section score to the cards currently shown in the UI.
+    // Drums was removed as a visible scorecard, so including it here made the
+    // displayed section % feel inconsistent with the five card values users see.
+    const visibleCardScores = [clarity, impact, tonalBalance, vocalLevel, width]
+    const score = Math.round(visibleCardScores.reduce((sum, value) => sum + Math.round(value), 0) / visibleCardScores.length)
 
     const strengths = [
       {
