@@ -569,13 +569,13 @@ export function buildSections(buffer: AudioBuffer): SectionAnalysis[] {
     const clarityWorst = Math.max(...clarityBands.map((band) => Math.abs(band.deviationPercent)))
     const clarityWatchCount = clarityBands.filter((band) => band.deviationPercent > 8).length
     const clarityBaseScore = clarityWorst <= 8
-      ? 95
+      ? 100
       : clarityWorst <= 16
         ? 90
         : clarityWorst <= 24
           ? 84
           : 80
-    const clarity = clamp(Math.round(clarityBaseScore - Math.max(0, clarityWatchCount - 1) * 2), 62, 96)
+    const clarity = clamp(Math.round(clarityBaseScore - Math.max(0, clarityWatchCount - 1) * 2), 62, 100)
 
     // Full-mix drum proxy: compare drum-like attack/low-end against vocal and midrange content.
     // This avoids the old self-normalised value that could stay frozen after drum bus changes.
