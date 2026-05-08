@@ -195,6 +195,11 @@ function parseTrackIdentityFromFilename(filename: string) {
 
 function impactReadout(item: ImpactStrip) {
   const amount = Math.abs(item.deviationPercent)
+  if (item.key === 'curiosity') {
+    if (item.status === 'low') return `${amount}% passive`
+    if (item.status === 'high') return item.range
+    return item.range || 'Building'
+  }
   if (item.status === 'low') return `${amount}% flat`
   if (item.status === 'high') return amount >= 31 ? `${amount}% huge lift` : `${amount}% big lift`
   return item.deviationPercent > 3 ? 'Energetic' : 'Good'
@@ -202,7 +207,6 @@ function impactReadout(item: ImpactStrip) {
 
 function widthReadout(item: BalanceStripItem) {
   const value = item.deviationPercent
-  const amount = Math.abs(value)
   if (item.key === 'middle') {
     if (value < -20) return 'Centre-light'
     if (value < -10) return 'Slightly centre-light'
@@ -216,6 +220,13 @@ function widthReadout(item: BalanceStripItem) {
     if (value > 26) return 'Very wide'
     if (value > 10) return 'Wide'
     return 'Balanced'
+  }
+  if (item.key === 'movement') {
+    if (value < -20) return 'Static'
+    if (value < -10) return 'Subtle move'
+    if (value > 26) return 'Big expansion'
+    if (value > 10) return 'Opening up'
+    return 'Breathing'
   }
   if (value < -20) return 'Focused'
   if (value < -10) return 'Tight'
@@ -553,6 +564,7 @@ export default function App() {
   const bestSection = sections.length ? [...sections].sort((a, b) => b.score - a.score)[0] : null
   const opportunitySection = sections.length ? [...sections].sort((a, b) => a.score - b.score)[0] : null
   const activeMetricInsight = activeSection ? activeSection.metricInsights[activeMetric] : null
+  const activeSectionUsesCuriosity = activeSection?.impactStrip?.key === 'curiosity'
 
   const recommendationTargetsByMetric: Record<keyof SectionAnalysis['metrics'], string[]> = {
     clarity: ['Overall mix', 'Instruments', 'Mix bus'],
@@ -593,7 +605,7 @@ export default function App() {
     return [
       makeLocalStripItem('middle', 'Middle', 'Centre image', middleDeviation, middleDeviation > 10 ? 'The mix is leaning centre-heavy. Move guitars, pads, delays, or textures further out before widening the master bus.' : middleDeviation < -10 ? 'The centre may be getting hollow. Keep vocal, kick, bass, and snare firmly centred.' : 'Middle energy feels balanced. Protect the vocal, kick, bass, and snare in the centre.'),
       makeLocalStripItem('side', 'Side', 'Stereo edges', sideDeviation, sideDeviation < -10 ? 'Side energy is low. Add width with double-tracked guitars, stereo pads, or wider FX returns.' : sideDeviation > 10 ? 'Side energy is wide. That can be excellent when the vocal, kick, bass, and snare still feel anchored in the middle.' : 'Side energy is sitting well. Keep the width moves subtle.'),
-      makeLocalStripItem('amount', 'Width amount', 'Overall spread', sideDeviation, sideDeviation < -10 ? 'Overall width is a little narrow. Move supporting guitars, pads, delays, or FX wider first.' : sideDeviation > 10 ? 'Overall spread is wide. Keep the stereo magic, but strengthen the centre if the section feels hollow.' : 'Overall width amount is sitting well. Protect the centre and keep the edges alive.'),
+      makeLocalStripItem('amount', 'Space', 'Overall spread', sideDeviation, sideDeviation < -10 ? 'Overall width is a little narrow. Move supporting guitars, pads, delays, or FX wider first.' : sideDeviation > 10 ? 'Overall spread is wide. Keep the stereo magic, but strengthen the centre if the section feels hollow.' : 'Overall width amount is sitting well. Protect the centre and keep the edges alive.'),
     ]
   }, [activeSection])
 
@@ -723,7 +735,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.48</span>
+              <span className="version-pill">v0.58</span>
             </div>
           </div>
 
@@ -894,13 +906,14 @@ export default function App() {
               <div className="metric-grid">
                 {METRIC_ORDER.map((name) => {
                   const value = activeSection.metrics[name]
+                  const label = name === 'impact' && activeSectionUsesCuriosity ? 'Curiosity' : metricLabel(name)
                   return (
                     <button
                       key={name}
                       className={`metric-card clickable ${activeMetric === name ? 'active' : ''} ${scoreTone(value)}`}
                       onClick={() => setActiveMetric(name)}
                     >
-                      <span>{metricLabel(name)}</span>
+                      <span>{label}</span>
                       <strong>{value}% {scoreIcon(value)}</strong>
                       <div className="mini-bar"><div className={`mini-bar-fill tone-${scoreTone(value)}`} style={{ width: `${value}%` }} /></div>
                     </button>
@@ -1013,7 +1026,7 @@ export default function App() {
                   {activeImpactBalance && (
                     <div className="level-balance-panel">
                       <div className="tonal-strip-card">
-                        <strong>Impact strip</strong>
+                        <strong>{activeImpactBalance.key === 'curiosity' ? 'Curiosity strip' : 'Impact strip'}</strong>
                         <div className="tonal-band-list">
                           {(() => {
                             const position = Math.max(6, Math.min(94, 50 + activeImpactBalance.deviationPercent * 2.2))
@@ -1035,23 +1048,37 @@ export default function App() {
                       <div className="tonal-action-card">
                         <span className="mini-label">First move</span>
                         <strong>{activeImpactBalance.action}</strong>
-                        <p>{activeImpactBalance.status === 'low' ? 'Make one contrast or punch move, then re-upload before chasing more loudness.' : activeImpactBalance.status === 'high' ? 'Right means more lift and arrival. Keep it when the section deserves it, then check that the groove still breathes.' : 'Keep the section punch intact while fixing other scorecards.'}</p>
+                        <p>{activeImpactBalance.key === 'curiosity'
+                          ? (activeImpactBalance.status === 'low'
+                              ? 'Give the intro one clearer reason to keep listening, then re-upload and trust your first reaction.'
+                              : activeImpactBalance.status === 'high'
+                                ? 'Right means more listener pull. Keep it if the intro feels memorable rather than cluttered.'
+                                : 'The intro is building curiosity. One distinctive sound or movement could make it more magnetic.')
+                          : activeImpactBalance.status === 'low'
+                            ? 'Make one contrast or punch move, then re-upload before chasing more loudness.'
+                            : activeImpactBalance.status === 'high'
+                              ? 'Right means more lift and arrival. Keep it when the section deserves it, then check that the groove still breathes.'
+                              : 'Keep the section punch intact while fixing other scorecards.'}</p>
                       </div>
                     </div>
                   )}
                   {activeMetric === 'width' && activeWidthBalance.length > 0 && (
                     <div className="level-balance-panel">
                       <div className="tonal-strip-card">
-                        <strong>Centre / Sides / Space strip</strong>
+                        <strong>Centre / Sides / Space / Movement strip</strong>
                         <div className="tonal-band-list">
                           {activeWidthBalance.map((item) => {
                             const position = Math.max(6, Math.min(94, 50 + item.deviationPercent * 2.2))
                             const readout = widthReadout(item)
+                            const infoOnly = item.key !== 'movement'
                             return (
-                              <div className={`tonal-band-row tonal-${item.severity}`} key={item.key} title={item.action}>
+                              <div className={`tonal-band-row tonal-${item.severity} ${infoOnly ? 'profile-info-row' : 'profile-action-row'}`} key={item.key} title={item.action}>
                                 <span className="tonal-band-name">{item.label}<small>{item.range}</small></span>
                                 <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
-                                <span className="tonal-readout">{readout}</span>
+                                <span className="tonal-readout profile-readout">
+                                  <span>{readout}</span>
+                                  {infoOnly && <small className="info-only-note"><span className="info-icon">i</span> Information only</small>}
+                                </span>
                               </div>
                             )
                           })}
@@ -1059,8 +1086,8 @@ export default function App() {
                       </div>
                       <div className="tonal-action-card">
                         <span className="mini-label">First move</span>
-                        <strong>{activeWidthBalance.find((item) => item.severity !== 'good')?.action ?? 'Width is sitting well. Protect the centre while keeping the edges alive.'}</strong>
-                        <p>{activeWidthBalance.every((item) => item.severity === 'good') ? 'Centre, sides, and space are working together. Check mono compatibility rather than pushing wider by default.' : 'For width, right is often good: wide sides and spacious spread can be the magic. Only worry when the centre gets hollow or the section loses focus.'}</p>
+                        <strong>{activeWidthBalance.find((item) => item.severity !== 'good')?.action ?? 'Width is sitting well. Protect the centre while letting sections expand and contract intentionally.'}</strong>
+                        <p>{activeWidthBalance.every((item) => item.severity === 'good') ? 'Centre, sides, space, and movement are working together. Check mono compatibility rather than pushing wider by default.' : 'For width, right often means expansion: wide sides, spacious spread, and movement can be the magic. Only worry when the centre gets hollow or the section loses focus.'}</p>
                       </div>
                     </div>
                   )}

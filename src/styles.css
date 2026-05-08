@@ -833,3 +833,40 @@ button, input { font: inherit; }
 }
 .section-chip.tone-target .chip-score { color: #eef6ff; }
 .section-chip.tone-strong .chip-score { color: #eafff7; }
+
+/* v0.58 width spatial profile: mark descriptor sliders as information-only */
+.profile-readout {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  line-height: 1.15;
+}
+.info-only-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #93c5fd;
+  font-size: 0.62rem;
+  font-weight: 850;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+.info-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.22);
+  border: 1px solid rgba(147, 197, 253, 0.48);
+  color: #bfdbfe;
+  font-size: 0.62rem;
+  font-weight: 950;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.profile-info-row .tonal-strip {
+  opacity: 0.82;
+}
+.profile-action-row .tonal-strip {
+  box-shadow: 0 0 0 1px rgba(87,225,174,0.08) inset;
+}
