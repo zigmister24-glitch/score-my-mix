@@ -544,9 +544,11 @@ export default function App() {
     await handleFile(file)
   }
 
-  const overallScore = sections.length
-    ? Math.round(sections.reduce((sum, section) => sum + section.score, 0) / sections.length)
+  const overallScoreExact = sections.length
+    ? sections.reduce((sum, section) => sum + section.score, 0) / sections.length
     : 0
+
+  const overallScore = Math.round(overallScoreExact)
 
   const bestSection = sections.length ? [...sections].sort((a, b) => b.score - a.score)[0] : null
   const opportunitySection = sections.length ? [...sections].sort((a, b) => a.score - b.score)[0] : null
@@ -795,7 +797,7 @@ export default function App() {
             <div>
               <p className="eyebrow">Overall Mix Score</p>
               <div className="score-line">
-                <h2>{overallScore}% {scoreIcon(overallScore) && <span className="inline-score-icon">{scoreIcon(overallScore)}</span>}</h2>
+                <h2 title={`${overallScoreExact.toFixed(2)}%`} aria-label={`Overall mix score ${overallScoreExact.toFixed(2)} percent`}>{overallScore}% {scoreIcon(overallScore) && <span className="inline-score-icon">{scoreIcon(overallScore)}</span>}</h2>
                 <div className="status-pill-row">
                   <span className={`status-pill tone-${scoreTone(overallScore)}`}>
                     {scoreLabel(overallScore)}
