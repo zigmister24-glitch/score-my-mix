@@ -223,6 +223,7 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
         </div>
         <div className="audio-controls">
           {sectionMapStatus ? <span className="section-map-status">{sectionMapStatus}</span> : null}
+          {onResetMap ? <button className="nav-button compact-reset-button" onClick={onResetMap}>Reset to auto</button> : null}
           <button className="primary-button" onClick={togglePlayback} disabled={!fileUrl}>
             {isPlaying ? 'Pause track' : 'Play track'}
           </button>

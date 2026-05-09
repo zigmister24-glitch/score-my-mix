@@ -790,16 +790,32 @@ export default function App() {
   }, [activeSection, activeMetric])
 
 
-  const rebuildSectionsFromBoundaries = (boundaries: number[], preferredSectionId?: string | null, dirty = true) => {
+  const autoSaveSectionMap = (nextSections: SectionAnalysis[]) => {
+    if (!trackIdentity || !nextSections.length) return
+    setSectionMapStatus('Auto-saving section map...')
+    saveSectionMap(trackIdentity, nextSections)
+      .then(() => {
+        setSectionMapDirty(false)
+        setSectionMapStatus('Section map auto-saved')
+      })
+      .catch((error) => {
+        console.error(error)
+        setSectionMapStatus('Auto-save failed - changes are still local')
+      })
+  }
+
+  const rebuildSectionsFromBoundaries = (boundaries: number[], preferredSectionId?: string | null, dirty = true, autoSave = false) => {
     const buffer = audioBufferRef.current
-    if (!buffer) return
+    if (!buffer) return [] as SectionAnalysis[]
     const nextSections = buildSections(buffer, boundaries)
     setSections(nextSections)
     setSectionMapDirty(dirty)
-    setSectionMapStatus(dirty ? 'Manual section map edited - save when happy' : 'Saved section map loaded')
+    setSectionMapStatus(dirty ? 'Manual section map edited - auto-saving...' : 'Saved section map loaded')
 
     const preferred = preferredSectionId ? nextSections.find((section) => section.id === preferredSectionId) : null
     setActiveSectionId(preferred?.id ?? nextSections[0]?.id ?? null)
+    if (autoSave) autoSaveSectionMap(nextSections)
+    return nextSections
   }
 
   const updateBoundary = (boundaryIndex: number, time: number) => {
@@ -809,7 +825,7 @@ export default function App() {
     const previous = boundaries[boundaryIndex - 1] ?? 0
     const next = boundaries[boundaryIndex + 1] ?? audioBufferRef.current.duration
     boundaries[boundaryIndex] = Math.max(previous + minGap, Math.min(next - minGap, time))
-    rebuildSectionsFromBoundaries(boundaries, activeSectionId, true)
+    rebuildSectionsFromBoundaries(boundaries, activeSectionId, true, true)
   }
 
   const addSectionSplit = (sectionId: string) => {
@@ -818,7 +834,7 @@ export default function App() {
     const boundaries = boundariesFromSections(sections)
     const split = section.start + (section.end - section.start) / 2
     boundaries.push(split)
-    rebuildSectionsFromBoundaries(boundaries, sectionId, true)
+    rebuildSectionsFromBoundaries(boundaries, sectionId, true, true)
   }
 
   const deleteSection = (sectionId: string) => {
@@ -828,7 +844,7 @@ export default function App() {
     const boundaries = boundariesFromSections(sections)
     if (index === 0) boundaries.splice(1, 1)
     else boundaries.splice(index, 1)
-    rebuildSectionsFromBoundaries(boundaries, sections[Math.max(0, index - 1)]?.id, true)
+    rebuildSectionsFromBoundaries(boundaries, sections[Math.max(0, index - 1)]?.id, true, true)
   }
 
   const applySelectedSectionTiming = () => {
@@ -850,7 +866,7 @@ export default function App() {
 
     if (activeSectionIndex > 0) boundaries[activeSectionIndex] = safeStart
     if (activeSectionIndex < sections.length - 1) boundaries[activeSectionIndex + 1] = safeEnd
-    rebuildSectionsFromBoundaries(boundaries, activeSection.id, true)
+    rebuildSectionsFromBoundaries(boundaries, activeSection.id, true, true)
   }
 
   const nudgeSelectedSectionTiming = (edge: 'start' | 'end', amount: number) => {
@@ -974,7 +990,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.61</span>
+              <span className="version-pill">v0.66</span>
             </div>
           </div>
 
@@ -1108,6 +1124,7 @@ export default function App() {
             onTimeChange={setCurrentTime}
             onPlayStateChange={setTrackPlaying}
             editable={false}
+            onResetMap={resetSectionMap}
             sectionMapStatus={`${sectionMapStatus}${sectionMapDirty ? ' *' : ''}`}
           />
 
@@ -1123,9 +1140,34 @@ export default function App() {
                     {scoreIcon(activeSection.score) ? <span className="score-badge-icon">{scoreIcon(activeSection.score)}</span> : null}
                   </div>
                 </div>
-                <div className="selected-center">
-                  <p className="eyebrow">Selected section</p>
-                  <h2>{activeSection.label}</h2>
+                <div className="section-timing-editor inline-section-editor">
+                  <div className="section-editor-actions inline-insert-action">
+                    {activeSectionIndex > 0 ? <button className="nav-button" onClick={() => activeSection && addSectionSplit(activeSection.id)}>Insert section</button> : <span className="section-action-placeholder" aria-hidden="true" />}
+                  </div>
+                  <div className="section-time-fields centered-time-fields">
+                    <label>
+                      <span>Start</span>
+                      <input
+                        value={sectionStartInput}
+                        onChange={(event) => setSectionStartInput(event.target.value)}
+                        onBlur={applySelectedSectionTiming}
+                        onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
+                      />
+                    </label>
+                    <span className="section-time-arrow">→</span>
+                    <label>
+                      <span>End</span>
+                      <input
+                        value={sectionEndInput}
+                        onChange={(event) => setSectionEndInput(event.target.value)}
+                        onBlur={applySelectedSectionTiming}
+                        onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
+                      />
+                    </label>
+                  </div>
+                  <div className="section-editor-actions inline-delete-action">
+                    <button className="nav-button" onClick={() => activeSection && deleteSection(activeSection.id)} disabled={sections.length <= 1}>Delete section</button>
+                  </div>
                 </div>
                 <div className="selected-actions">
                   <button
@@ -1144,33 +1186,6 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="section-timing-editor">
-                <div className="section-time-fields">
-                  <label>
-                    <span>Start</span>
-                    <input value={sectionStartInput} onChange={(event) => setSectionStartInput(event.target.value)} onBlur={applySelectedSectionTiming} />
-                  </label>
-                  <span className="section-time-arrow">→</span>
-                  <label>
-                    <span>End</span>
-                    <input value={sectionEndInput} onChange={(event) => setSectionEndInput(event.target.value)} onBlur={applySelectedSectionTiming} />
-                  </label>
-                </div>
-                <div className="section-nudge-row">
-                  <button className="tiny-button" onClick={() => nudgeSelectedSectionTiming('start', -1)}>-1s start</button>
-                  <button className="tiny-button" onClick={() => nudgeSelectedSectionTiming('start', 1)}>+1s start</button>
-                  <button className="tiny-button" onClick={() => nudgeSelectedSectionTiming('end', -1)}>-1s end</button>
-                  <button className="tiny-button" onClick={() => nudgeSelectedSectionTiming('end', 1)}>+1s end</button>
-                </div>
-                <div className="section-editor-actions">
-                  <button className="secondary-button" onClick={applySelectedSectionTiming}>Apply timing</button>
-                  <button className="secondary-button" onClick={saveCurrentSectionMap}>Save section map</button>
-                  {activeSectionIndex > 0 ? <button className="nav-button" onClick={() => activeSection && addSectionSplit(activeSection.id)}>Insert section</button> : null}
-                  <button className="nav-button" onClick={() => activeSection && deleteSection(activeSection.id)} disabled={sections.length <= 1}>Delete section</button>
-                  <button className="nav-button" onClick={resetSectionMap}>Reset to auto</button>
-                </div>
-                <p className="section-editor-note">Type exact section times, then save when the chorus/verse map is locked.</p>
-              </div>
 
               <div className="metric-grid">
                 {METRIC_ORDER.map((name) => {

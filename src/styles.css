@@ -997,3 +997,84 @@ button, input { font: inherit; }
   font-size: 0.84rem;
   font-weight: 700;
 }
+
+/* v0.62 compact selected-section editor */
+.inline-section-editor {
+  flex: 1;
+  justify-content: center;
+  margin: 0;
+  padding: 8px 10px;
+  background: transparent;
+  border-color: transparent;
+  gap: 12px;
+}
+.inline-section-editor .section-time-fields input {
+  width: 76px;
+  padding: 8px 9px;
+}
+.inline-section-editor .section-editor-actions .nav-button {
+  padding: 8px 12px;
+  border-radius: 12px;
+}
+@media (max-width: 980px) {
+  .selected-header { flex-wrap: wrap; }
+  .inline-section-editor { order: 3; width: 100%; flex-basis: 100%; }
+}
+
+/* v0.66 selected section horizontal timing layout */
+.inline-section-editor {
+  display: grid;
+  grid-template-columns: minmax(130px, auto) minmax(190px, auto) minmax(130px, auto);
+  align-items: center;
+  justify-content: center;
+  column-gap: 12px;
+  row-gap: 6px;
+}
+.centered-time-fields {
+  justify-content: center;
+}
+.centered-time-fields label {
+  align-items: center;
+  text-align: center;
+}
+.inline-insert-action,
+.inline-delete-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 130px;
+}
+.inline-insert-action .nav-button,
+.inline-delete-action .nav-button {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+.section-action-placeholder {
+  display: block;
+  width: 100%;
+  min-width: 130px;
+  height: 1px;
+}
+.auto-detected-label {
+  color: #aeb8d8;
+  font-size: 0.9rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+@media (max-width: 1180px) {
+  .auto-detected-label { display: none; }
+}
+@media (max-width: 980px) {
+  .inline-section-editor {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+  .inline-insert-action,
+  .inline-delete-action {
+    min-width: 160px;
+    width: 100%;
+    max-width: 220px;
+  }
+}
