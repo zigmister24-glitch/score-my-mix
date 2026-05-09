@@ -1,6 +1,6 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import WaveformPanel, { WaveformHandle } from './components/WaveformPanel'
-import { buildSections, decodeAudioFile } from './lib/audioAnalysis'
+import { buildSections, decodeAudioFile, formatTime } from './lib/audioAnalysis'
 import { SectionAnalysis } from './lib/types'
 
 const ACCEPTED_TYPES = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac']
@@ -461,6 +461,18 @@ function formatLeaderboardDate(iso: string) {
 }
 
 
+function parseSectionTime(value: string) {
+  const cleaned = value.trim()
+  if (!cleaned) return null
+  const parts = cleaned.split(':').map((part) => part.trim())
+  if (parts.some((part) => part === '' || Number.isNaN(Number(part)))) return null
+  if (parts.length === 1) return Number(parts[0])
+  if (parts.length === 2) return Number(parts[0]) * 60 + Number(parts[1])
+  if (parts.length === 3) return Number(parts[0]) * 3600 + Number(parts[1]) * 60 + Number(parts[2])
+  return null
+}
+
+
 export default function App() {
   const [dragActive, setDragActive] = useState(false)
   const [fileUrl, setFileUrl] = useState<string | null>(null)
@@ -483,6 +495,8 @@ export default function App() {
   const [trackIdentity, setTrackIdentity] = useState<TrackIdentityState | null>(null)
   const [sectionMapStatus, setSectionMapStatus] = useState('Auto sections')
   const [sectionMapDirty, setSectionMapDirty] = useState(false)
+  const [sectionStartInput, setSectionStartInput] = useState('')
+  const [sectionEndInput, setSectionEndInput] = useState('')
 
   const activeSectionIndex = useMemo(
     () => sections.findIndex((section) => section.id === activeSectionId),
@@ -493,6 +507,16 @@ export default function App() {
     () => sections.find((section) => section.id === activeSectionId) ?? null,
     [sections, activeSectionId],
   )
+
+  useEffect(() => {
+    if (!activeSection) {
+      setSectionStartInput('')
+      setSectionEndInput('')
+      return
+    }
+    setSectionStartInput(formatTime(activeSection.start))
+    setSectionEndInput(formatTime(activeSection.end))
+  }, [activeSection?.id, activeSection?.start, activeSection?.end])
 
   useEffect(() => {
     return () => {
@@ -807,6 +831,36 @@ export default function App() {
     rebuildSectionsFromBoundaries(boundaries, sections[Math.max(0, index - 1)]?.id, true)
   }
 
+  const applySelectedSectionTiming = () => {
+    if (!audioBufferRef.current || !activeSection || activeSectionIndex < 0) return
+    const start = parseSectionTime(sectionStartInput)
+    const end = parseSectionTime(sectionEndInput)
+    if (start === null || end === null) {
+      setSectionMapStatus('Enter times as mm:ss, for example 01:14')
+      return
+    }
+
+    const minGap = 3
+    const boundaries = boundariesFromSections(sections)
+    const duration = audioBufferRef.current.duration
+    const previousLimit = activeSectionIndex === 0 ? 0 : (boundaries[activeSectionIndex - 1] ?? 0) + minGap
+    const nextLimit = activeSectionIndex === sections.length - 1 ? duration : (boundaries[activeSectionIndex + 2] ?? duration) - minGap
+    const safeStart = activeSectionIndex === 0 ? 0 : Math.max(previousLimit, Math.min(end - minGap, start))
+    const safeEnd = activeSectionIndex === sections.length - 1 ? duration : Math.min(nextLimit, Math.max(safeStart + minGap, end))
+
+    if (activeSectionIndex > 0) boundaries[activeSectionIndex] = safeStart
+    if (activeSectionIndex < sections.length - 1) boundaries[activeSectionIndex + 1] = safeEnd
+    rebuildSectionsFromBoundaries(boundaries, activeSection.id, true)
+  }
+
+  const nudgeSelectedSectionTiming = (edge: 'start' | 'end', amount: number) => {
+    const current = parseSectionTime(edge === 'start' ? sectionStartInput : sectionEndInput)
+    if (current === null) return
+    const next = formatTime(Math.max(0, current + amount))
+    if (edge === 'start') setSectionStartInput(next)
+    else setSectionEndInput(next)
+  }
+
   const saveCurrentSectionMap = async () => {
     if (!trackIdentity || !sections.length) return
     try {
@@ -920,7 +974,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.60</span>
+              <span className="version-pill">v0.61</span>
             </div>
           </div>
 
@@ -1053,12 +1107,7 @@ export default function App() {
             onSelectSection={setActiveSectionId}
             onTimeChange={setCurrentTime}
             onPlayStateChange={setTrackPlaying}
-            editable
-            onBoundaryMove={updateBoundary}
-            onAddSection={addSectionSplit}
-            onDeleteSection={deleteSection}
-            onSaveMap={saveCurrentSectionMap}
-            onResetMap={resetSectionMap}
+            editable={false}
             sectionMapStatus={`${sectionMapStatus}${sectionMapDirty ? ' *' : ''}`}
           />
 
@@ -1093,6 +1142,34 @@ export default function App() {
                     Next →
                   </button>
                 </div>
+              </div>
+
+              <div className="section-timing-editor">
+                <div className="section-time-fields">
+                  <label>
+                    <span>Start</span>
+                    <input value={sectionStartInput} onChange={(event) => setSectionStartInput(event.target.value)} onBlur={applySelectedSectionTiming} />
+                  </label>
+                  <span className="section-time-arrow">→</span>
+                  <label>
+                    <span>End</span>
+                    <input value={sectionEndInput} onChange={(event) => setSectionEndInput(event.target.value)} onBlur={applySelectedSectionTiming} />
+                  </label>
+                </div>
+                <div className="section-nudge-row">
+                  <button className="tiny-button" onClick={() => nudgeSelectedSectionTiming('start', -1)}>-1s start</button>
+                  <button className="tiny-button" onClick={() => nudgeSelectedSectionTiming('start', 1)}>+1s start</button>
+                  <button className="tiny-button" onClick={() => nudgeSelectedSectionTiming('end', -1)}>-1s end</button>
+                  <button className="tiny-button" onClick={() => nudgeSelectedSectionTiming('end', 1)}>+1s end</button>
+                </div>
+                <div className="section-editor-actions">
+                  <button className="secondary-button" onClick={applySelectedSectionTiming}>Apply timing</button>
+                  <button className="secondary-button" onClick={saveCurrentSectionMap}>Save section map</button>
+                  {activeSectionIndex > 0 ? <button className="nav-button" onClick={() => activeSection && addSectionSplit(activeSection.id)}>Insert section</button> : null}
+                  <button className="nav-button" onClick={() => activeSection && deleteSection(activeSection.id)} disabled={sections.length <= 1}>Delete section</button>
+                  <button className="nav-button" onClick={resetSectionMap}>Reset to auto</button>
+                </div>
+                <p className="section-editor-note">Type exact section times, then save when the chorus/verse map is locked.</p>
               </div>
 
               <div className="metric-grid">
