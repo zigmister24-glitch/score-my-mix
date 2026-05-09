@@ -649,10 +649,31 @@ function getTimeLabel(start: number, end: number) {
   return `${formatTime(start)}–${formatTime(end)}`
 }
 
-export function buildSections(buffer: AudioBuffer): SectionAnalysis[] {
+function normaliseCustomBoundaries(boundaries: number[], duration: number) {
+  const cleaned = [...boundaries, 0, duration]
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value))
+    .map((value) => clamp(value, 0, duration))
+    .sort((a, b) => a - b)
+
+  const result: number[] = []
+  for (const value of cleaned) {
+    if (!result.length || Math.abs(value - result[result.length - 1]) > 0.05) result.push(value)
+  }
+
+  if (result[0] !== 0) result.unshift(0)
+  if (Math.abs(result[result.length - 1] - duration) > 0.05) result.push(duration)
+  result[0] = 0
+  result[result.length - 1] = duration
+  return result.length >= 2 ? result : [0, duration]
+}
+
+export function buildSections(buffer: AudioBuffer, customBoundaries?: number[]): SectionAnalysis[] {
   const channel = buffer.getChannelData(0)
   const sampleRate = buffer.sampleRate
-  const boundaries = detectSectionBoundaries(buffer)
+  const boundaries = customBoundaries?.length
+    ? normaliseCustomBoundaries(customBoundaries, buffer.duration)
+    : detectSectionBoundaries(buffer)
   const globalEnergy = averageAbs(channel, 0, channel.length)
   const sections: SectionAnalysis[] = []
 

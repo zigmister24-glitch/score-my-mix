@@ -19,6 +19,25 @@ type LeaderboardEntry = {
   normalizedTitle: string
 }
 
+type TrackIdentityState = {
+  normalizedTitle: string
+  title: string
+  artist: string
+  displayName: string
+  durationSeconds: number
+}
+
+type SavedSectionMapItem = {
+  start: number
+  end: number
+  label?: string
+}
+
+type SavedSectionMap = {
+  sections: SavedSectionMapItem[]
+  source?: string
+}
+
 function stripExtension(name: string) {
   return name.replace(/\.[^.]+$/, '')
 }
@@ -284,6 +303,81 @@ function mapApiEntry(entry: any): LeaderboardEntry {
   }
 }
 
+
+async function readSectionMap(track: TrackIdentityState): Promise<SavedSectionMap | null> {
+  try {
+    const params = new URLSearchParams({
+      normalized_title: track.normalizedTitle,
+      duration_seconds: String(track.durationSeconds),
+    })
+    const res = await fetch(`/api/section-map?${params.toString()}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    })
+    if (!res.ok) throw new Error('Section map load failed')
+    const data = await res.json()
+    if (!data.ok || !data.found || !data.map?.sections?.length) return null
+    return data.map
+  } catch (error) {
+    console.warn('Section map unavailable. Falling back to auto-detect:', error)
+    return null
+  }
+}
+
+async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalysis[]) {
+  const payload = {
+    normalized_title: track.normalizedTitle,
+    title: track.title,
+    artist: track.artist,
+    display_name: track.displayName,
+    duration_seconds: track.durationSeconds,
+    sections: sections.map((section) => ({
+      start: Number(section.start.toFixed(3)),
+      end: Number(section.end.toFixed(3)),
+      label: section.label,
+    })),
+  }
+
+  const res = await fetch('/api/section-map', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({ ok: false, error: 'Invalid response' }))
+  if (!res.ok || !data.ok) throw new Error(data.error || 'Section map save failed')
+  return data
+}
+
+async function deleteSectionMap(track: TrackIdentityState) {
+  const res = await fetch('/api/section-map', {
+    method: 'DELETE',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      normalized_title: track.normalizedTitle,
+      duration_seconds: track.durationSeconds,
+    }),
+  })
+  const data = await res.json().catch(() => ({ ok: false, error: 'Invalid response' }))
+  if (!res.ok || !data.ok) throw new Error(data.error || 'Section map delete failed')
+  return data
+}
+
+function boundariesFromSectionMap(map: SavedSectionMap, durationSeconds: number) {
+  const boundaries = [0]
+  for (const section of map.sections) {
+    if (Number.isFinite(section.start)) boundaries.push(section.start)
+    if (Number.isFinite(section.end)) boundaries.push(section.end)
+  }
+  boundaries.push(durationSeconds)
+  return [...new Set(boundaries.map((value) => Math.max(0, Math.min(durationSeconds, Number(value)))))]
+    .sort((a, b) => a - b)
+}
+
+function boundariesFromSections(sections: SectionAnalysis[]) {
+  if (!sections.length) return []
+  return [sections[0].start, ...sections.map((section) => section.end)]
+}
+
 async function readLeaderboard(): Promise<{
   allTime: LeaderboardEntry[]
   hotStreak: LeaderboardEntry[]
@@ -384,6 +478,11 @@ export default function App() {
   const [leaderboardLoading, setLeaderboardLoading] = useState(true)
   const analysisRef = useRef<HTMLElement | null>(null)
   const waveformApiRef = useRef<WaveformHandle | null>(null)
+  const audioBufferRef = useRef<AudioBuffer | null>(null)
+  const autoSectionsRef = useRef<SectionAnalysis[]>([])
+  const [trackIdentity, setTrackIdentity] = useState<TrackIdentityState | null>(null)
+  const [sectionMapStatus, setSectionMapStatus] = useState('Auto sections')
+  const [sectionMapDirty, setSectionMapDirty] = useState(false)
 
   const activeSectionIndex = useMemo(
     () => sections.findIndex((section) => section.id === activeSectionId),
@@ -449,10 +548,9 @@ export default function App() {
       setFileName(file.name)
 
       const buffer = await decodeAudioFile(file)
-      const nextSections = buildSections(buffer)
-      const nextOverallScore = nextSections.length
-        ? Math.round(nextSections.reduce((sum, section) => sum + section.score, 0) / nextSections.length)
-        : 0
+      audioBufferRef.current = buffer
+      const autoSections = buildSections(buffer)
+      autoSectionsRef.current = autoSections
       const identity = await inferTrackIdentity(file)
       const durationSeconds = Math.round(buffer.duration || 0)
       if (durationSeconds < 60 || durationSeconds > 900) {
@@ -470,6 +568,26 @@ export default function App() {
         setIsLoading(false)
         return
       }
+
+      const nextTrackIdentity: TrackIdentityState = {
+        normalizedTitle,
+        title: identity.title,
+        artist: identity.artist,
+        displayName: identity.displayName,
+        durationSeconds,
+      }
+      setTrackIdentity(nextTrackIdentity)
+
+      const savedMap = await readSectionMap(nextTrackIdentity)
+      const nextSections = savedMap
+        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration))
+        : autoSections
+      setSectionMapStatus(savedMap ? 'Saved section map loaded' : 'Auto-detected sections')
+      setSectionMapDirty(false)
+
+      const nextOverallScore = nextSections.length
+        ? Math.round(nextSections.reduce((sum, section) => sum + section.score, 0) / nextSections.length)
+        : 0
 
       const nowIso = new Date().toISOString()
       const currentEntry: LeaderboardEntry = {
@@ -647,6 +765,73 @@ export default function App() {
     return activeSection?.impactStrip ?? null
   }, [activeSection, activeMetric])
 
+
+  const rebuildSectionsFromBoundaries = (boundaries: number[], preferredSectionId?: string | null, dirty = true) => {
+    const buffer = audioBufferRef.current
+    if (!buffer) return
+    const nextSections = buildSections(buffer, boundaries)
+    setSections(nextSections)
+    setSectionMapDirty(dirty)
+    setSectionMapStatus(dirty ? 'Manual section map edited - save when happy' : 'Saved section map loaded')
+
+    const preferred = preferredSectionId ? nextSections.find((section) => section.id === preferredSectionId) : null
+    setActiveSectionId(preferred?.id ?? nextSections[0]?.id ?? null)
+  }
+
+  const updateBoundary = (boundaryIndex: number, time: number) => {
+    if (!audioBufferRef.current || boundaryIndex <= 0 || boundaryIndex >= sections.length) return
+    const minGap = 3
+    const boundaries = boundariesFromSections(sections)
+    const previous = boundaries[boundaryIndex - 1] ?? 0
+    const next = boundaries[boundaryIndex + 1] ?? audioBufferRef.current.duration
+    boundaries[boundaryIndex] = Math.max(previous + minGap, Math.min(next - minGap, time))
+    rebuildSectionsFromBoundaries(boundaries, activeSectionId, true)
+  }
+
+  const addSectionSplit = (sectionId: string) => {
+    const section = sections.find((item) => item.id === sectionId)
+    if (!section || section.end - section.start < 6) return
+    const boundaries = boundariesFromSections(sections)
+    const split = section.start + (section.end - section.start) / 2
+    boundaries.push(split)
+    rebuildSectionsFromBoundaries(boundaries, sectionId, true)
+  }
+
+  const deleteSection = (sectionId: string) => {
+    if (sections.length <= 1) return
+    const index = sections.findIndex((section) => section.id === sectionId)
+    if (index < 0) return
+    const boundaries = boundariesFromSections(sections)
+    if (index === 0) boundaries.splice(1, 1)
+    else boundaries.splice(index, 1)
+    rebuildSectionsFromBoundaries(boundaries, sections[Math.max(0, index - 1)]?.id, true)
+  }
+
+  const saveCurrentSectionMap = async () => {
+    if (!trackIdentity || !sections.length) return
+    try {
+      setSectionMapStatus('Saving section map...')
+      await saveSectionMap(trackIdentity, sections)
+      setSectionMapDirty(false)
+      setSectionMapStatus('Saved section map')
+    } catch (error) {
+      console.error(error)
+      setSectionMapStatus('Section map save failed - using local edits')
+    }
+  }
+
+  const resetSectionMap = async () => {
+    const autoSections = autoSectionsRef.current
+    if (!autoSections.length) return
+    setSections(autoSections)
+    setActiveSectionId(autoSections[0]?.id ?? null)
+    setSectionMapDirty(false)
+    setSectionMapStatus('Reset to auto-detected sections')
+    if (trackIdentity) {
+      try { await deleteSectionMap(trackIdentity) } catch (error) { console.warn('Could not delete saved section map:', error) }
+    }
+  }
+
   const goToSection = (index: number, mode: 'seek' | 'play' = 'seek') => {
     if (index < 0 || index >= sections.length) return
     const next = sections[index]
@@ -735,7 +920,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.58</span>
+              <span className="version-pill">v0.60</span>
             </div>
           </div>
 
@@ -868,6 +1053,13 @@ export default function App() {
             onSelectSection={setActiveSectionId}
             onTimeChange={setCurrentTime}
             onPlayStateChange={setTrackPlaying}
+            editable
+            onBoundaryMove={updateBoundary}
+            onAddSection={addSectionSplit}
+            onDeleteSection={deleteSection}
+            onSaveMap={saveCurrentSectionMap}
+            onResetMap={resetSectionMap}
+            sectionMapStatus={`${sectionMapStatus}${sectionMapDirty ? ' *' : ''}`}
           />
 
           <section className="content-grid" ref={analysisRef}>

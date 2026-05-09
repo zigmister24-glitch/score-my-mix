@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, PointerEvent as ReactPointerEvent, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import WaveSurfer from 'wavesurfer.js'
 import { SectionAnalysis } from '../lib/types'
 import { formatTime } from '../lib/audioAnalysis'
@@ -11,6 +11,13 @@ interface WaveformPanelProps {
   onSelectSection: (id: string) => void
   onTimeChange?: (time: number) => void
   onPlayStateChange?: (playing: boolean) => void
+  editable?: boolean
+  onBoundaryMove?: (boundaryIndex: number, time: number) => void
+  onAddSection?: (sectionId: string) => void
+  onDeleteSection?: (sectionId: string) => void
+  onSaveMap?: () => void
+  onResetMap?: () => void
+  sectionMapStatus?: string
 }
 
 export interface WaveformHandle {
@@ -43,6 +50,13 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
   onSelectSection,
   onTimeChange,
   onPlayStateChange,
+  editable = false,
+  onBoundaryMove,
+  onAddSection,
+  onDeleteSection,
+  onSaveMap,
+  onResetMap,
+  sectionMapStatus,
 }: WaveformPanelProps, ref) {
   const waveformRef = useRef<HTMLDivElement | null>(null)
   const waveSurferRef = useRef<WaveSurfer | null>(null)
@@ -50,6 +64,7 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  const frameRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!waveformRef.current || !fileUrl) return
@@ -159,6 +174,39 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
     },
   }), [duration, onSelectSection, onTimeChange])
 
+
+  const getTimeFromPointer = (event: ReactPointerEvent<HTMLElement> | PointerEvent) => {
+    if (!frameRef.current || duration === 0) return 0
+    const rect = frameRef.current.getBoundingClientRect()
+    const usableLeft = rect.left + 12
+    const usableWidth = Math.max(1, rect.width - 24)
+    const ratio = Math.max(0, Math.min(1, (event.clientX - usableLeft) / usableWidth))
+    return ratio * duration
+  }
+
+  const startBoundaryDrag = (boundaryIndex: number, event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (!editable || !onBoundaryMove || duration === 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    const pointerId = event.pointerId
+    event.currentTarget.setPointerCapture(pointerId)
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      onBoundaryMove(boundaryIndex, getTimeFromPointer(moveEvent))
+    }
+
+    const handleUp = (upEvent: PointerEvent) => {
+      try { event.currentTarget.releasePointerCapture(pointerId) } catch {}
+      event.currentTarget.removeEventListener('pointermove', handleMove as any)
+      event.currentTarget.removeEventListener('pointerup', handleUp as any)
+      event.currentTarget.removeEventListener('pointercancel', handleUp as any)
+    }
+
+    event.currentTarget.addEventListener('pointermove', handleMove as any)
+    event.currentTarget.addEventListener('pointerup', handleUp as any)
+    event.currentTarget.addEventListener('pointercancel', handleUp as any)
+  }
+
   const jumpToSection = (section: SectionAnalysis) => {
     onSelectSection(section.id)
     if (!waveSurferRef.current || duration === 0) return
@@ -174,6 +222,7 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
           <h2>{fileName || 'Uploaded audio'}</h2>
         </div>
         <div className="audio-controls">
+          {sectionMapStatus ? <span className="section-map-status">{sectionMapStatus}</span> : null}
           <button className="primary-button" onClick={togglePlayback} disabled={!fileUrl}>
             {isPlaying ? 'Pause track' : 'Play track'}
           </button>
@@ -183,20 +232,44 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
         </div>
       </div>
 
-      <div className="waveform-frame">
+      {editable && sections.length ? (
+        <div className="section-map-toolbar">
+          <button className="secondary-button" onClick={onSaveMap} disabled={!onSaveMap}>Save section map</button>
+          <button className="nav-button" onClick={() => activeSectionId && onAddSection?.(activeSectionId)} disabled={!activeSectionId || !onAddSection}>Add split</button>
+          <button className="nav-button" onClick={() => activeSectionId && onDeleteSection?.(activeSectionId)} disabled={!activeSectionId || sections.length <= 1 || !onDeleteSection}>Delete section</button>
+          <button className="nav-button" onClick={onResetMap} disabled={!onResetMap}>Reset to auto</button>
+          <span className="section-map-help">Drag section edges to lock exact chorus/verse timing.</span>
+        </div>
+      ) : null}
+
+      <div className="waveform-frame" ref={frameRef}>
         <div ref={waveformRef} />
         <div className="section-overlay">
-          {sections.map((section) => {
+          {sections.map((section, index) => {
             const left = `${(section.start / Math.max(1, duration)) * 100}%`
             const width = `${((section.end - section.start) / Math.max(1, duration)) * 100}%`
             const isActive = section.id === activeSectionId
             return (
               <button
                 key={section.id}
-                className={`section-chip ${isActive ? 'active' : ''} level-${section.highlightLevel} ${chipTone(section.score)}`}
+                className={`section-chip ${isActive ? 'active' : ''} level-${section.highlightLevel} ${chipTone(section.score)} ${editable ? 'editable-chip' : ''}`}
                 style={{ left, width, borderColor: isActive ? section.color : undefined }}
                 onClick={() => jumpToSection(section)}
               >
+                {editable && index > 0 ? (
+                  <span
+                    className="section-handle section-handle-left"
+                    title="Drag section start"
+                    onPointerDown={(event) => startBoundaryDrag(index, event)}
+                  />
+                ) : null}
+                {editable && index < sections.length - 1 ? (
+                  <span
+                    className="section-handle section-handle-right"
+                    title="Drag section end"
+                    onPointerDown={(event) => startBoundaryDrag(index + 1, event)}
+                  />
+                ) : null}
                 <span className="chip-top" style={{ background: section.highlightLevel > 0 ? section.color : 'transparent' }} />
                 <span className="chip-label">{section.label}</span>
                 <span className="chip-score">{section.score}% {scoreIcon(section.score)}</span>
