@@ -990,7 +990,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.66</span>
+              <span className="version-pill">v0.82</span>
             </div>
           </div>
 
@@ -1141,9 +1141,6 @@ export default function App() {
                   </div>
                 </div>
                 <div className="section-timing-editor inline-section-editor">
-                  <div className="section-editor-actions inline-insert-action">
-                    {activeSectionIndex > 0 ? <button className="nav-button" onClick={() => activeSection && addSectionSplit(activeSection.id)}>Insert section</button> : <span className="section-action-placeholder" aria-hidden="true" />}
-                  </div>
                   <div className="section-time-fields centered-time-fields">
                     <label>
                       <span>Start</span>
@@ -1165,8 +1162,9 @@ export default function App() {
                       />
                     </label>
                   </div>
-                  <div className="section-editor-actions inline-delete-action">
+                  <div className="section-editor-actions stacked-section-actions">
                     <button className="nav-button" onClick={() => activeSection && deleteSection(activeSection.id)} disabled={sections.length <= 1}>Delete section</button>
+                    {activeSectionIndex > 0 ? <button className="nav-button" onClick={() => activeSection && addSectionSplit(activeSection.id)}>Insert section</button> : null}
                   </div>
                 </div>
                 <div className="selected-actions">
@@ -1215,7 +1213,8 @@ export default function App() {
                         <div className="tonal-band-list">
                           {activeTonalBands.map((band) => {
                             const position = Math.max(6, Math.min(94, 50 + band.deviationPercent * 2.2))
-                            const readout = band.status === 'good' ? 'Good' : `${Math.abs(band.deviationPercent)}% ${band.status}`
+                            const displayValue = Math.abs(band.displayPercent ?? band.deviationPercent)
+                            const readout = band.status === 'good' ? 'Good' : `${displayValue}% ${band.status}`
                             return (
                               <button
                                 className={`tonal-band-row tonal-${band.severity}`}
@@ -1229,11 +1228,6 @@ export default function App() {
                             )
                           })}
                         </div>
-                      </div>
-                      <div className="tonal-action-card">
-                        <span className="mini-label">First move</span>
-                        <strong>{tonalActionBand?.action}</strong>
-                        <p>{tonalActionBand?.status === 'good' ? 'No big tonal fire to put out here. Compare against your reference before tweaking.' : `Start with ${tonalActionBand?.label.toLowerCase()} only, then re-upload and check the score before changing another band.`}</p>
                       </div>
                     </div>
                   )}
@@ -1243,8 +1237,9 @@ export default function App() {
                         <strong>Clarity clash strip</strong>
                         <div className="tonal-band-list">
                           {activeClarityBands.map((band) => {
-                            const position = band.status === 'good' ? 50 : Math.max(6, Math.min(94, 50 + band.deviationPercent * 2.2))
-                            const readout = band.status === 'good' ? 'Good' : `${Math.abs(band.deviationPercent)}% clash`
+                            const position = Math.max(6, Math.min(94, 50 + band.deviationPercent * 2.2))
+                            const displayValue = Math.abs(band.displayPercent ?? band.deviationPercent)
+                            const readout = band.status === 'good' ? 'Good' : `${displayValue}% clash`
                             return (
                               <button
                                 className={`tonal-band-row tonal-${band.severity}`}
@@ -1259,10 +1254,10 @@ export default function App() {
                           })}
                         </div>
                       </div>
-                      <div className="tonal-action-card">
-                        <span className="mini-label">First move</span>
-                        <strong>{clarityActionBand?.action}</strong>
-                        <p>{clarityActionBand?.status === 'good' ? 'No obvious clarity clash here. Protect this balance while fixing bigger scorecards.' : `Start with ${clarityActionBand?.label.toLowerCase()} only, then re-upload before cutting another band.`}</p>
+                      <div className="clarity-workflow-card">
+                        <strong>Clarity check workflow</strong>
+                        <p>Dense synths, pads, and layered sounds can naturally create clarity density. That can be normal, especially when the sound is wide or intentionally saturated.</p>
+                        <p>To isolate real masking, test one bus at a time: start with Synths/Pads, then add Guitars, then Drums, and add Vocals last. Watch which stage introduces blur or loss of separation.</p>
                       </div>
                     </div>
                   )}
@@ -1283,11 +1278,6 @@ export default function App() {
                             )
                           })()}
                         </div>
-                      </div>
-                      <div className="tonal-action-card">
-                        <span className="mini-label">First move</span>
-                        <strong>{activeLevelBalance.action}</strong>
-                        <p>{activeLevelBalance.status === 'good' ? 'No obvious fader fire here. Keep this level steady while you fix the bigger scorecards.' : 'Make this simple fader move first, re-upload, and only then chase compression or EQ.'}</p>
                       </div>
                     </div>
                   )}
@@ -1329,21 +1319,6 @@ export default function App() {
                           <ul>{activeImpactBalance.earCheck.map((item) => <li key={item}>{item}</li>)}</ul>
                         </div>
                       </div>
-                      <div className="tonal-action-card">
-                        <span className="mini-label">First move</span>
-                        <strong>{activeImpactBalance.action}</strong>
-                        <p>{activeImpactBalance.key === 'curiosity'
-                          ? (activeImpactBalance.status === 'low'
-                              ? 'Give the intro one clearer reason to keep listening, then re-upload and trust your first reaction.'
-                              : activeImpactBalance.status === 'high'
-                                ? 'Right means more listener pull. Keep it if the intro feels memorable rather than cluttered.'
-                                : 'The intro is building curiosity. One distinctive sound or movement could make it more magnetic.')
-                          : activeImpactBalance.status === 'low'
-                            ? 'Make one contrast or punch move, then re-upload before chasing more loudness.'
-                            : activeImpactBalance.status === 'high'
-                              ? 'Right means more lift and arrival. Keep it when the section deserves it, then check that the groove still breathes.'
-                              : 'Keep the section punch intact while fixing other scorecards.'}</p>
-                      </div>
                     </div>
                   )}
                   {activeMetric === 'width' && activeWidthBalance.length > 0 && (
@@ -1368,11 +1343,6 @@ export default function App() {
                           })}
                         </div>
                       </div>
-                      <div className="tonal-action-card">
-                        <span className="mini-label">First move</span>
-                        <strong>{activeWidthBalance.find((item) => item.severity !== 'good')?.action ?? 'Width is sitting well. Protect the centre while letting sections expand and contract intentionally.'}</strong>
-                        <p>{activeWidthBalance.every((item) => item.severity === 'good') ? 'Centre, sides, space, and movement are working together. Check mono compatibility rather than pushing wider by default.' : 'For width, right often means expansion: wide sides, spacious spread, and movement can be the magic. Only worry when the centre gets hollow or the section loses focus.'}</p>
-                      </div>
                     </div>
                   )}
                   <div className="metric-detail-copy">
@@ -1383,26 +1353,6 @@ export default function App() {
                 </div>
               )}
 
-              <div className="recommendation-section">
-                <div className="recommendation-heading-row">
-                  <div className={`highlight-title ${displayedRecommendationMode === 'Top recommendations' ? 'accent-title' : 'explore-title'}`}>
-                    {displayedRecommendationMode} - {metricLabel(activeMetric)}
-                  </div>
-                </div>
-                <div className="list-stack recommendation-grid">
-                  {displayedRecommendations.map((recommendation) => (
-                    <div className="info-card" key={recommendation.title}>
-                      <div className="recommendation-top">
-                        <span className={`priority priority-${recommendation.priority.toLowerCase().replace(/\s+/g, '-')}`}>{recommendation.priority}</span>
-                        <span className="lift">{recommendation.estimatedLift}</span>
-                      </div>
-                      <strong>{recommendation.title}</strong>
-                      <p>{recommendation.detail}</p>
-                      <p className="target-tag">Target: {recommendation.target}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </article>
           </section>
         </>

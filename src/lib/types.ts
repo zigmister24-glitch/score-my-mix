@@ -36,6 +36,7 @@ export interface BalanceStripItem {
   label: string
   range: string
   deviationPercent: number
+  displayPercent?: number
   status: 'low' | 'good' | 'high'
   severity: 'good' | 'watch' | 'fix'
   action: string

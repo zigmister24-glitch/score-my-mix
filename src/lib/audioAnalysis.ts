@@ -100,6 +100,58 @@ function estimateStereoWidth(buffer: AudioBuffer, startIndex: number, endIndex: 
   return side / Math.max(0.0001, mid + side)
 }
 
+
+function estimateBandStereoSeparation(buffer: AudioBuffer, sampleRate: number, startIndex: number, endIndex: number, frequency: number, q = 0.9) {
+  if (buffer.numberOfChannels < 2) return 0
+  const left = buffer.getChannelData(0)
+  const right = buffer.getChannelData(1)
+  const w0 = (2 * Math.PI * frequency) / sampleRate
+  const alpha = Math.sin(w0) / (2 * q)
+  const cosW0 = Math.cos(w0)
+  let b0 = alpha
+  let b1 = 0
+  let b2 = -alpha
+  const a0 = 1 + alpha
+  let a1 = -2 * cosW0
+  let a2 = 1 - alpha
+
+  b0 /= a0
+  b1 /= a0
+  b2 /= a0
+  a1 /= a0
+  a2 /= a0
+
+  let lX1 = 0
+  let lX2 = 0
+  let lY1 = 0
+  let lY2 = 0
+  let rX1 = 0
+  let rX2 = 0
+  let rY1 = 0
+  let rY2 = 0
+  let mid = 0
+  let side = 0
+
+  for (let i = startIndex; i < endIndex; i += 1) {
+    const l0 = left[i] ?? 0
+    const r0 = right[i] ?? 0
+    const lFiltered = b0 * l0 + b1 * lX1 + b2 * lX2 - a1 * lY1 - a2 * lY2
+    const rFiltered = b0 * r0 + b1 * rX1 + b2 * rX2 - a1 * rY1 - a2 * rY2
+    lX2 = lX1
+    lX1 = l0
+    lY2 = lY1
+    lY1 = lFiltered
+    rX2 = rX1
+    rX1 = r0
+    rY2 = rY1
+    rY1 = rFiltered
+    mid += Math.abs((lFiltered + rFiltered) * 0.5)
+    side += Math.abs((lFiltered - rFiltered) * 0.5)
+  }
+
+  return side / Math.max(0.0001, mid + side)
+}
+
 function formatStatus(score: number) {
   if (score >= 90) return 'Exceptional section'
   if (score >= 80) return 'Rewarding section'
@@ -229,10 +281,14 @@ function makeTonalBand(key: TonalBalanceBand['key'], label: string, range: strin
   const rawDeviation = ((share - target) / Math.max(0.0001, target)) * 100
   const deviationPercent = roundDeviation(rawDeviation)
   const abs = Math.abs(deviationPercent)
-  const status: TonalBalanceBand['status'] = abs <= 10 ? 'good' : deviationPercent < 0 ? 'low' : 'high'
-  const severity: TonalBalanceBand['severity'] = abs <= 10 ? 'good' : abs <= 20 ? 'watch' : 'fix'
+  const healthyWindow = 10
+  const excessPercent = Math.round(clamp(Math.max(0, abs - healthyWindow), 0, 32))
+  const status: TonalBalanceBand['status'] = excessPercent <= 0 ? 'good' : deviationPercent < 0 ? 'low' : 'high'
+  const severity: TonalBalanceBand['severity'] = excessPercent <= 0 ? 'good' : excessPercent <= 10 ? 'watch' : 'fix'
   const action = status === 'good' ? `${label} is sitting well. Protect it while fixing bigger bands.` : status === 'low' ? actionLow : actionHigh
-  return { key, label, range, deviationPercent, status, severity, action }
+  // v0.82: keep the dot/slider based on the real tonal deviation, but show
+  // only the amount outside the healthy +/-10% window in the readout.
+  return { key, label, range, deviationPercent, displayPercent: excessPercent, status, severity, action }
 }
 
 function buildTonalBalanceBands(samples: Float32Array, sampleRate: number, startIndex: number, endIndex: number): TonalBalanceBand[] {
@@ -415,12 +471,41 @@ function primaryTonalRecommendation(bands: TonalBalanceBand[], tonalBalance: num
 }
 
 
+function clarityGoodLimit(key: string) {
+  // v0.78: each clarity band gets its own healthy density window. Low-end
+  // overlap between kick/bass/808 can be musical glue, while Air gets fatiguing
+  // much faster. These limits control the displayed Good/Watch/Fix behaviour
+  // and the Clarity score pressure.
+  if (key === 'weight') return 20
+  if (key === 'body') return 20
+  if (key === 'core') return 15
+  if (key === 'air') return 10
+  return 10
+}
+
+function clarityScorePressure(band: BalanceStripItem) {
+  // v0.81: the slider position stays based on total density, while the
+  // readout/scoring uses only the amount above the healthy tolerance.
+  const excess = Math.max(0, Math.abs(band.displayPercent ?? band.deviationPercent))
+  return excess <= 0 ? 0 : 8 + excess * 1.15
+}
+
 function makeClarityBand(key: string, label: string, range: string, blurPercent: number, action: string): BalanceStripItem {
-  const rounded = Math.round(clamp(blurPercent, 0, 28))
-  const status: BalanceStripItem['status'] = rounded <= 8 ? 'good' : 'high'
-  const severity: BalanceStripItem['severity'] = rounded <= 8 ? 'good' : rounded <= 16 ? 'watch' : 'fix'
-  const finalAction = status === 'good' ? `${label} (${range}) is clean enough here. Protect it while fixing bigger clashes.` : action
-  return { key, label, range, deviationPercent: rounded, status, severity, action: finalAction }
+  // v0.77: Commercial reference tracks often show a consistent right-leaning
+  // density profile in Weight/Body/Core even when they still sound clear and
+  // readable. Treat that baseline as normal musical density, not instant clash.
+  // v0.81: keep the dot/slider based on the real density amount, but show
+  // only the amount ABOVE the band’s healthy tolerance in the text label.
+  const densityOffset = key === 'body' ? 10 : key === 'core' ? 8 : key === 'weight' ? 8 : 0
+  const densityScale = key === 'air' ? 1 : key === 'body' ? 0.92 : 0.9
+  const adjustedBlur = Math.max(0, blurPercent - densityOffset) * densityScale
+  const goodLimit = clarityGoodLimit(key)
+  const actualRounded = Math.round(clamp(adjustedBlur, 0, 32))
+  const excessRounded = Math.round(clamp(Math.max(0, adjustedBlur - goodLimit), 0, 32))
+  const status: BalanceStripItem['status'] = excessRounded <= 0 ? 'good' : 'high'
+  const severity: BalanceStripItem['severity'] = excessRounded <= 0 ? 'good' : excessRounded <= 8 ? 'watch' : 'fix'
+  const finalAction = status === 'good' ? `${label} (${range}) is within its healthy density window. Protect it while fixing bigger clashes.` : action
+  return { key, label, range, deviationPercent: actualRounded, displayPercent: excessRounded, status, severity, action: finalAction }
 }
 
 
@@ -524,25 +609,107 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
   return clamp(Math.round(90 - centrePenalty - narrowPenalty - staticPenalty - tooWidePenalty + tastefulWideBonus + movementBonus), 62, 100)
 }
 
-function buildClarityBands(samples: Float32Array, sampleRate: number, startIndex: number, endIndex: number, transientEnergy: number, fullRms: number): BalanceStripItem[] {
+function buildClarityBands(
+  samples: Float32Array,
+  sampleRate: number,
+  startIndex: number,
+  endIndex: number,
+  transientEnergy: number,
+  fullRms: number,
+  sectionContext?: { impact?: number; width?: number; tonalBalance?: number; coreStereoSeparation?: number },
+): BalanceStripItem[] {
   const weight = bandpassRms(samples, sampleRate, startIndex, endIndex, 70, 0.75)
   const body = bandpassRms(samples, sampleRate, startIndex, endIndex, 220, 0.85)
-  const core = bandpassRms(samples, sampleRate, startIndex, endIndex, 1050, 0.85)
+
+  // Keep Core as one simple visible band, but analyse it in smaller internal
+  // zones. A single synth harmonic cluster should not be treated the same as
+  // broad 350 Hz–2 kHz congestion across the whole midrange.
+  const lowCore = bandpassRms(samples, sampleRate, startIndex, endIndex, 520, 0.9)
+  const midCore = bandpassRms(samples, sampleRate, startIndex, endIndex, 950, 0.9)
+  const upperCore = bandpassRms(samples, sampleRate, startIndex, endIndex, 1650, 0.85)
+  // Use a composite Core value for the visible broad-band balance.
+  // v0.74: after adding Core sub-zones, summing all three Core filters into
+  // the shared total made Core dominate the denominator and flattened Weight,
+  // Body, and Air. Average the sub-zones for the visible balance so every
+  // clarity band keeps its own movement, while still using all three sub-zones
+  // internally to decide whether Core density is narrow or broad.
+  const core = (lowCore + midCore + upperCore) / 3
+
   const air = bandpassRms(samples, sampleRate, startIndex, endIndex, 8500, 0.7)
   const total = Math.max(0.0001, weight + body + core + air)
+  const coreSubTotal = Math.max(0.0001, weight + body + lowCore + midCore + upperCore + air)
+  const weightShare = weight / total
+  const bodyShare = body / total
+  const coreShare = core / total
+  const lowCoreShare = lowCore / coreSubTotal
+  const midCoreShare = midCore / coreSubTotal
+  const upperCoreShare = upperCore / coreSubTotal
+  const airShare = air / total
   const transientLift = clamp((transientEnergy / Math.max(0.0001, fullRms)) * 45, 0, 1)
-  const smearPenalty = (1 - transientLift) * 5
 
-  const clash = (share: number, target: number, extra = 0) => {
+  // v0.67: Clarity needs to distinguish dense single-source texture from true
+  // masking. A bright synth/pad can legitimately own a lot of core/air without
+  // multiple instruments fighting. When the low bands are controlled and the
+  // section is relatively smooth/coherent, soften the upper-band clash readout.
+  const coherentTexture = transientLift < 0.28 && weightShare <= 0.34 && bodyShare <= 0.29
+  const cinematicDensity = Boolean(
+    coherentTexture
+    && (sectionContext?.impact ?? 0) >= 90
+    && (sectionContext?.width ?? 0) >= 84
+    && (sectionContext?.tonalBalance ?? 0) >= 80,
+  )
+
+  // v0.68: If the section is energetic, spatially stable, tonally okay, and the
+  // low bands are controlled, treat extra upper-mid energy as intentional density
+  // rather than automatic masking. This keeps a single big synth/pad from dragging
+  // Clarity down as hard while still leaving true low-mid mud strict.
+  const upperDensityTolerance = cinematicDensity ? 0.38 : coherentTexture ? 0.58 : 1
+  // v0.73: keep Core smart/forgiving, but let Body and especially Air
+  // keep their own personality. Air should still react to cymbal fizz,
+  // bright synths, sibilance, and harsh reverbs instead of being protected
+  // by the same tolerance used for coherent Core density.
+  const bodySensitivity = coherentTexture ? 0.78 : 0.88
+  const airTolerance = cinematicDensity ? 0.74 : coherentTexture ? 0.88 : 1
+  const coreStereoSeparation = sectionContext?.coreStereoSeparation ?? 0
+  // v0.71: Same frequencies are most problematic when they also live in the
+  // same stereo location. If the Core energy is clearly separated between left
+  // and right, treat some of that density as spatially decoded instead of a
+  // direct masking clash. Keep mono/centre-piled Core strict.
+  const spatialCoreTolerance = coreStereoSeparation >= 0.34
+    ? clamp(1 - ((coreStereoSeparation - 0.34) * 1.15), 0.58, 1)
+    : 1
+  const coreDensityTolerance = (cinematicDensity ? 0.42 : upperDensityTolerance) * spatialCoreTolerance
+  const smearPenalty = coherentTexture ? 0 : (1 - transientLift) * 5
+
+  const clash = (share: number, target: number, extra = 0, sensitivity = 0.62) => {
     const overTarget = Math.max(0, ((share - target) / Math.max(0.0001, target)) * 100)
-    return overTarget * 0.7 + extra
+    return overTarget * sensitivity + extra
   }
 
+  // v0.70: Core is internally split into low/mid/upper zones. If only one
+  // sub-zone is hot, show it as a smaller concentrated density warning. If two
+  // or three zones are hot, treat it as real broad midrange congestion.
+  const coreSubClashes = [
+    clash(lowCoreShare, 0.13, smearPenalty * 0.2, 0.50),
+    clash(midCoreShare, 0.13, smearPenalty * 0.2, 0.50),
+    clash(upperCoreShare, 0.12, smearPenalty * 0.2, 0.50),
+  ]
+  const hotCoreZones = coreSubClashes.filter((value) => value > 8).length
+  const sortedCoreClashes = [...coreSubClashes].sort((a, b) => b - a)
+  const concentratedCoreClash = sortedCoreClashes[0] * 0.62
+  const twoZoneCoreClash = ((sortedCoreClashes[0] + sortedCoreClashes[1]) / 2) * 0.86
+  const broadCoreClash = clash(coreShare, 0.37, smearPenalty * 0.45, 0.54)
+  const coreClash = (hotCoreZones <= 1
+    ? concentratedCoreClash
+    : hotCoreZones === 2
+      ? Math.max(twoZoneCoreClash, broadCoreClash * 0.72)
+      : Math.max(sortedCoreClashes[0], broadCoreClash)) * coreDensityTolerance
+
   return [
-    makeClarityBand('weight', 'Weight', '20–120 Hz', clash(weight / total, 0.30, smearPenalty * 0.4), 'Separate kick and bass first: try sidechain or cut one small pocket around 60–100 Hz.'),
-    makeClarityBand('body', 'Body', '120–350 Hz', clash(body / total, 0.25, smearPenalty), 'Low-mid blur. Cut 150–300 Hz about -1 to -2 dB on guitars, pads, or reverb returns.'),
-    makeClarityBand('core', 'Core', '350 Hz–2 kHz', clash(core / total, 0.34, smearPenalty * 0.55), 'Core clash. Pull busy guitars/synths back about -1 dB or cut a small pocket around 500 Hz–1 kHz.'),
-    makeClarityBand('air', 'Air', '5–12 kHz', clash(air / total, 0.20, 0), 'Top-end blur. Ease hats, fizz, or bright synths around 6–10 kHz by about -1 dB.'),
+    makeClarityBand('weight', 'Weight', '20–120 Hz', clash(weightShare, 0.28, smearPenalty * 0.45, 0.68), 'Separate kick and bass first: try sidechain or cut one small pocket around 60–100 Hz.'),
+    makeClarityBand('body', 'Body', '120–350 Hz', clash(bodyShare, 0.21, smearPenalty * 0.85, bodySensitivity), 'Low-mid blur. Cut 150–300 Hz about -1 to -2 dB on guitars, pads, or reverb returns.'),
+    makeClarityBand('core', 'Core', '350 Hz–2 kHz', coreClash, 'Core density. If vocals/guitars are masked, pull busy synths back about -1 dB or cut a small pocket around 500 Hz–1 kHz.'),
+    makeClarityBand('air', 'Air', '5–12 kHz', clash(airShare, 0.16, 0, 1.05) * airTolerance, 'Bright density. If it feels fizzy or masks cymbal/vocal air, ease 6–10 kHz by about -1 dB.'),
   ]
 }
 
@@ -727,17 +894,61 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[]):
     const curiosity = scoreCuriosity(channel, buffer, sampleRate, startIndex, endIndex, fullRms, zcr, transientStrength, stereoWidth)
     const impact = i === 0 ? curiosity : normalImpact
     const impactStrip = i === 0 ? makeCuriosityStrip(curiosity) : makeImpactStrip(impact, contrastScore, transientStrength, movement)
-    const clarityBands = buildClarityBands(channel, sampleRate, startIndex, endIndex, transientEnergy, fullRms)
-    const clarityWorst = Math.max(...clarityBands.map((band) => Math.abs(band.deviationPercent)))
-    const clarityWatchCount = clarityBands.filter((band) => band.deviationPercent > 8).length
-    const clarityBaseScore = clarityWorst <= 8
+    const coreStereoSeparation = buffer.numberOfChannels >= 2
+      ? (
+        estimateBandStereoSeparation(buffer, sampleRate, startIndex, endIndex, 520, 0.9)
+        + estimateBandStereoSeparation(buffer, sampleRate, startIndex, endIndex, 950, 0.9)
+        + estimateBandStereoSeparation(buffer, sampleRate, startIndex, endIndex, 1650, 0.85)
+      ) / 3
+      : 0
+    const clarityBands = buildClarityBands(channel, sampleRate, startIndex, endIndex, transientEnergy, fullRms, { impact, width, tonalBalance, coreStereoSeparation })
+    const clarityPressureValues = clarityBands.map((band) => clarityScorePressure(band))
+    const clarityWorst = Math.max(...clarityPressureValues)
+    const clarityWatchCount = clarityBands.filter((band) => band.severity !== 'good').length
+    const clarityFixCount = clarityBands.filter((band) => band.severity === 'fix').length
+    const clarityProblemBands = clarityBands.filter((band) => band.severity !== 'good')
+    const onlyCoreWarning = clarityProblemBands.length === 1 && clarityProblemBands[0]?.key === 'core'
+    const lowBandsClean = clarityBands
+      .filter((band) => band.key === 'weight' || band.key === 'body')
+      .every((band) => band.severity === 'good')
+    const airClean = clarityBands.find((band) => band.key === 'air')?.severity === 'good'
+    const intentionalCoreDensity = Boolean(
+      onlyCoreWarning
+      && lowBandsClean
+      && airClean
+      && impact >= 88
+      && tonalBalance >= 80,
+    )
+
+    // v0.69: keep the visible Core clash readout, but stop one isolated,
+    // intentional midrange-density warning from cratering the whole Clarity card.
+    // Multi-band clashes and low-band mud are still punished hard.
+    const effectiveClarityWorst = intentionalCoreDensity
+      ? Math.max(10, clarityWorst * 0.52)
+      : clarityWorst
+    const effectiveWatchCount = intentionalCoreDensity ? 1 : clarityWatchCount
+    const effectiveFixCount = intentionalCoreDensity ? 0 : clarityFixCount
+    // v0.76: keep the clash readouts expressive, but make the Clarity
+    // percentage more perceptual and less punitive. Commercial/reference mixes
+    // can show several density warnings while still sounding clear because the
+    // ear can decode groove, width, tone, and transient intent. Use a softer
+    // score curve here: severe multi-band problems still pull the score down,
+    // but normal musical density no longer craters the card.
+    const clarityBaseScore = effectiveClarityWorst <= 8
       ? 100
-      : clarityWorst <= 16
-        ? 90
-        : clarityWorst <= 24
-          ? 84
-          : 80
-    const clarity = clamp(Math.round(clarityBaseScore - Math.max(0, clarityWatchCount - 1) * 2), 62, 100)
+      : effectiveClarityWorst <= 16
+        ? 95
+        : effectiveClarityWorst <= 24
+          ? 91
+          : effectiveClarityWorst <= 32
+            ? 88
+            : 88 - ((effectiveClarityWorst - 32) * 0.6)
+    const densityStackPenalty = Math.max(0, effectiveWatchCount - 1) * 0.75 + effectiveFixCount * 1.25
+    const clarity = clamp(
+      Math.round(clarityBaseScore - densityStackPenalty),
+      62,
+      100,
+    )
 
     // Full-mix drum proxy: compare drum-like attack/low-end against vocal and midrange content.
     // This avoids the old self-normalised value that could stay frozen after drum bus changes.
