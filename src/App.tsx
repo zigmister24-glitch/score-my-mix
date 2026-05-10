@@ -1,6 +1,6 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import WaveformPanel, { WaveformHandle } from './components/WaveformPanel'
-import { buildSections, decodeAudioFile, formatTime } from './lib/audioAnalysis'
+import { AnalysisGenreProfile, buildSections, decodeAudioFile, formatTime } from './lib/audioAnalysis'
 import { SectionAnalysis } from './lib/types'
 
 declare global {
@@ -21,7 +21,7 @@ const GENRE_PROFILES = {
   'Singer Songwriter': { tonal: { weight: -3, body: 2, core: 5, air: 2 }, vocals: 2 },
   'Cinematic / Trailer': { tonal: { weight: 8, body: 6, core: -2, air: 1 }, vocals: 0 },
   'Scarlett Lullaby': { tonal: { weight: 5, body: 4, core: 1, air: 2 }, vocals: 1 },
-} as const
+} as const satisfies Record<string, AnalysisGenreProfile>
 
 type GenreProfileName = keyof typeof GENRE_PROFILES
 
@@ -675,6 +675,8 @@ export default function App() {
     setSectionMapStatus('Unsaved section timing')
   }
 
+  const currentGenreProfile = (genre = selectedGenre) => GENRE_PROFILES[genre]
+
   useEffect(() => {
     if (!activeSection) {
       setSectionStartInput('')
@@ -741,7 +743,7 @@ export default function App() {
       const buffer = await decodeAudioFile(file)
       audioBufferRef.current = buffer
       setHasAudioBuffer(true)
-      const autoSections = buildSections(buffer)
+      const autoSections = buildSections(buffer, undefined, currentGenreProfile())
       autoSectionsRef.current = autoSections
       const identity = await inferTrackIdentity(file)
       const durationSeconds = Math.round(buffer.duration || 0)
@@ -770,11 +772,16 @@ export default function App() {
       }
       setTrackIdentity(nextTrackIdentity)
 
-      const savedMap = await readSectionMap(nextTrackIdentity, selectedGenre)
+      const savedMap = await readSectionMap(nextTrackIdentity)
+      const loadedGenre = savedMap?.genre && savedMap.genre in GENRE_PROFILES
+        ? savedMap.genre
+        : 'Modern Pop'
+      setSelectedGenre(loadedGenre)
       const nextSections = savedMap
-        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration))
-        : autoSections
-      setSectionMapStatus(savedMap ? 'Saved section map loaded' : 'Auto-detected sections')
+        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration), currentGenreProfile(loadedGenre))
+        : buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
+      autoSectionsRef.current = buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
+      setSectionMapStatus(savedMap ? `Saved ${loadedGenre} map loaded` : 'Auto-detected sections')
       setSectionMapDirty(false)
 
       const nextOverallScore = nextSections.length
@@ -1018,7 +1025,7 @@ export default function App() {
   const rebuildSectionsFromBoundaries = (boundaries: number[], preferredSectionId?: string | null, dirty = true, autoSave = false) => {
     const buffer = audioBufferRef.current
     if (!buffer) return [] as SectionAnalysis[]
-    const nextSections = buildSections(buffer, boundaries)
+    const nextSections = buildSections(buffer, boundaries, currentGenreProfile())
     setSections(nextSections)
     setSectionMapDirty(dirty)
     setSectionMapStatus(dirty ? 'Manual section map edited - auto-saving...' : 'Saved section map loaded')
@@ -1122,7 +1129,7 @@ export default function App() {
     if (activeSectionIndex > 0) boundaries[activeSectionIndex] = safeStart
     if (activeSectionIndex < sections.length - 1) boundaries[activeSectionIndex + 1] = safeEnd
 
-    const nextSections = buildSections(audioBufferRef.current, boundaries)
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile())
     await saveCurrentSectionMap(nextSections)
   }
 
@@ -1143,16 +1150,33 @@ export default function App() {
     setSelectedGenre(nextGenre)
     if (!trackIdentity || !audioBufferRef.current) return
 
-    setSectionMapStatus('Loading genre section map...')
+    setSectionMapStatus('Loading genre profile...')
     const savedMap = await readSectionMap(trackIdentity, nextGenre)
-    const nextSections = savedMap
-      ? buildSections(audioBufferRef.current, boundariesFromSectionMap(savedMap, audioBufferRef.current.duration))
-      : autoSectionsRef.current
+    const boundaries = savedMap
+      ? boundariesFromSectionMap(savedMap, audioBufferRef.current.duration)
+      : sections.length
+        ? boundariesFromSections(sections)
+        : undefined
+
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(nextGenre))
+    const nextAutoSections = buildSections(audioBufferRef.current, undefined, currentGenreProfile(nextGenre))
+    autoSectionsRef.current = nextAutoSections
 
     setSections(nextSections)
     setActiveSectionId(nextSections[0]?.id ?? null)
     setSectionMapDirty(false)
-    setSectionMapStatus(savedMap ? `Saved ${nextGenre} map loaded` : `No saved ${nextGenre} map - using auto sections`)
+
+    if (trackIdentity.durationSeconds >= 60) {
+      try {
+        await saveSectionMap(trackIdentity, nextSections, nextGenre)
+        setSectionMapStatus(`Saved ${nextGenre} genre map`)
+      } catch (error) {
+        console.warn('Could not save genre map:', error)
+        setSectionMapStatus(`${nextGenre} profile loaded - save failed`)
+      }
+    } else {
+      setSectionMapStatus(`${nextGenre} profile loaded locally`)
+    }
   }
 
   const goToSection = (index: number, mode: 'seek' | 'play' = 'seek') => {
@@ -1243,7 +1267,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.102</span>
+              <span className="version-pill">v0.104</span>
             </div>
           </div>
 

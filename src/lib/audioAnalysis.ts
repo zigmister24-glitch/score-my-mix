@@ -1,7 +1,33 @@
 import { BalanceStripItem, ImpactStrip, Recommendation, SectionAnalysis, SectionMetrics, TonalBalanceBand } from './types'
 
+export type AnalysisGenreProfile = {
+  tonal?: {
+    weight?: number
+    body?: number
+    core?: number
+    air?: number
+  }
+  vocals?: number
+  width?: {
+    middle?: number
+    side?: number
+    amount?: number
+  }
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
+}
+
+function shiftedTarget(base: number, offset = 0) {
+  return base * (1 + offset / 100)
+}
+
+function normalizeTargets<T extends Record<string, number>>(targets: T): T {
+  const total = Object.values(targets).reduce((sum, value) => sum + value, 0) || 1
+  return Object.fromEntries(
+    Object.entries(targets).map(([key, value]) => [key, value / total]),
+  ) as T
 }
 
 function averageAbs(samples: Float32Array, start: number, end: number) {
@@ -291,18 +317,24 @@ function makeTonalBand(key: TonalBalanceBand['key'], label: string, range: strin
   return { key, label, range, deviationPercent, displayPercent: excessPercent, status, severity, action }
 }
 
-function buildTonalBalanceBands(samples: Float32Array, sampleRate: number, startIndex: number, endIndex: number): TonalBalanceBand[] {
+function buildTonalBalanceBands(samples: Float32Array, sampleRate: number, startIndex: number, endIndex: number, genreProfile?: AnalysisGenreProfile): TonalBalanceBand[] {
   const low = bandpassRms(samples, sampleRate, startIndex, endIndex, 70, 0.75)
   const lowMid = bandpassRms(samples, sampleRate, startIndex, endIndex, 220, 0.85)
   const mid = bandpassRms(samples, sampleRate, startIndex, endIndex, 1050, 0.85)
   const high = bandpassRms(samples, sampleRate, startIndex, endIndex, 8500, 0.7)
   const total = Math.max(0.0001, low + lowMid + mid + high)
+  const targets = normalizeTargets({
+    weight: shiftedTarget(0.28, genreProfile?.tonal?.weight),
+    body: shiftedTarget(0.24, genreProfile?.tonal?.body),
+    core: shiftedTarget(0.32, genreProfile?.tonal?.core),
+    air: shiftedTarget(0.16, genreProfile?.tonal?.air),
+  })
 
   return [
-    makeTonalBand('weight', 'Weight', 'Lows · 20–120 Hz', low / total, 0.28, 'Add kick/bass weight or lift low-end elements about +1–2 dB.', 'Bass too dominant. Try reducing bass or kick about -1–2 dB.'),
-    makeTonalBand('body', 'Body', 'Low-mids · 120–350 Hz', lowMid / total, 0.24, 'Add body with guitar, pad, or a gentle 180–300 Hz lift.', 'Low-mid buildup. Cut 150–300 Hz on guitars, pads, or reverb returns.'),
-    makeTonalBand('core', 'Core', 'Mids · 350 Hz–2 kHz', mid / total, 0.32, 'Mids are thin. Increase guitar/synth about +1–2 dB or add acoustic/pad support.', 'Midrange crowded. Pull supporting guitars/synths back about -1 dB or cut 500 Hz–1 kHz.'),
-    makeTonalBand('air', 'Air', 'Highs · 5–12 kHz', high / total, 0.16, 'Add clarity with shaker, cymbal air, or a gentle 8–12 kHz lift.', 'Top end is bright. Reduce hats/cymbals or harsh 6–10 kHz by about -1 dB.'),
+    makeTonalBand('weight', 'Weight', 'Lows · 20–120 Hz', low / total, targets.weight, 'Add kick/bass weight or lift low-end elements about +1–2 dB.', 'Bass too dominant. Try reducing bass or kick about -1–2 dB.'),
+    makeTonalBand('body', 'Body', 'Low-mids · 120–350 Hz', lowMid / total, targets.body, 'Add body with guitar, pad, or a gentle 180–300 Hz lift.', 'Low-mid buildup. Cut 150–300 Hz on guitars, pads, or reverb returns.'),
+    makeTonalBand('core', 'Core', 'Mids · 350 Hz–2 kHz', mid / total, targets.core, 'Mids are thin. Increase guitar/synth about +1–2 dB or add acoustic/pad support.', 'Midrange crowded. Pull supporting guitars/synths back about -1 dB or cut 500 Hz–1 kHz.'),
+    makeTonalBand('air', 'Air', 'Highs · 5–12 kHz', high / total, targets.air, 'Add clarity with shaker, cymbal air, or a gentle 8–12 kHz lift.', 'Top end is bright. Reduce hats/cymbals or harsh 6–10 kHz by about -1 dB.'),
   ]
 }
 
@@ -522,13 +554,14 @@ function makeWidthBand(key: string, label: string, range: string, deviationPerce
   return { key, label, range, deviationPercent, status, severity, action }
 }
 
-function buildWidthBands(stereoWidth: number, previousStereoWidth: number | null, widthMotion: number): BalanceStripItem[] {
+function buildWidthBands(stereoWidth: number, previousStereoWidth: number | null, widthMotion: number, genreProfile?: AnalysisGenreProfile): BalanceStripItem[] {
   // stereoWidth is side / (mid + side). Wide sides are not automatically bad.
   // Width combines: centre anchor, side energy, total space, and stereo movement.
   // The centre readout is deliberately softer than the side readout: a modern,
   // cinematic section can have very wide sides without automatically having a
   // broken centre.
-  const targetSideShare = 0.23
+  const widthOffset = ((genreProfile?.width?.side ?? 0) + (genreProfile?.width?.amount ?? 0)) / 2
+  const targetSideShare = shiftedTarget(0.23, widthOffset)
   const sideDeviation = ((stereoWidth - targetSideShare) / targetSideShare) * 100
   const wideExcess = Math.max(0, sideDeviation - 8)
   const narrowExcess = Math.max(0, -sideDeviation - 8)
@@ -835,7 +868,7 @@ function normaliseCustomBoundaries(boundaries: number[], duration: number) {
   return result.length >= 2 ? result : [0, duration]
 }
 
-export function buildSections(buffer: AudioBuffer, customBoundaries?: number[]): SectionAnalysis[] {
+export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile): SectionAnalysis[] {
   const channel = buffer.getChannelData(0)
   const sampleRate = buffer.sampleRate
   const boundaries = customBoundaries?.length
@@ -860,7 +893,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[]):
     const widthSecondHalf = estimateStereoWidth(buffer, midpointIndex, endIndex)
     const widthMotion = Math.abs(widthSecondHalf - widthFirstHalf) / Math.max(0.04, Math.max(widthFirstHalf, widthSecondHalf))
     const sectionDuration = end - start
-    const tonalBalanceBands = buildTonalBalanceBands(channel, sampleRate, startIndex, endIndex)
+    const tonalBalanceBands = buildTonalBalanceBands(channel, sampleRate, startIndex, endIndex, genreProfile)
     const tonalDeviations = tonalBalanceBands.map((band) => Math.abs(band.deviationPercent))
     const tonalWorstDeviation = Math.max(...tonalDeviations)
     const tonalWatchCount = tonalDeviations.filter((deviation) => deviation > 10).length
@@ -878,7 +911,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[]):
           ? 84
           : 84 - ((tonalWorstDeviation - 30) * 1.1)
     const tonalBalance = clamp(Math.round(tonalBaseScore - Math.max(0, tonalWatchCount - 1) * 2 - tonalFixCount * 2), 62, 96)
-    const widthBands = buildWidthBands(stereoWidth, previousStereoWidth, widthMotion)
+    const widthBands = buildWidthBands(stereoWidth, previousStereoWidth, widthMotion, genreProfile)
     const width = scoreWidthFromBands(widthBands)
     const lowPunch = bandpassRms(channel, sampleRate, startIndex, endIndex, 75, 0.9)
     const lowMidMask = bandpassRms(channel, sampleRate, startIndex, endIndex, 260, 0.85)
@@ -972,13 +1005,14 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[]):
     const drumLevelTarget = 0.42
     const vocalRatio = vocalBand / Math.max(0.0001, fullRms)
     const drumsVsEverything = scoreAroundTarget(drumLevelRatio, drumLevelTarget, 150, 40, 94)
-    const vocalLevel = scoreAroundTarget(vocalRatio, VOCAL_LEVEL_TARGET_ROCK, 150, 40, 100)
+    const vocalTarget = clamp(VOCAL_LEVEL_TARGET_ROCK + ((genreProfile?.vocals ?? 0) * 0.01), 0.28, 0.48)
+    const vocalLevel = scoreAroundTarget(vocalRatio, vocalTarget, 150, 40, 100)
     const levelBalance = {
       drums: makeLevelBalanceItem('drums', 'Drums', drumLevelRatio, drumLevelTarget),
       kick: makeLevelBalanceItem('kick', 'Kick', kickProxy, 0.26),
       snare: makeLevelBalanceItem('snare', 'Snare', snareProxy, 0.22),
       cymbals: makeLevelBalanceItem('cymbals', 'Cymbals', snapEnergy / Math.max(0.0001, snapEnergy + vocalBand + midBody + lowPunch), 0.24),
-      vocals: makeLevelBalanceItem('vocals', 'Vocals', vocalRatio, VOCAL_LEVEL_TARGET_ROCK),
+      vocals: makeLevelBalanceItem('vocals', 'Vocals', vocalRatio, vocalTarget),
     }
     const metrics = { clarity, impact, tonalBalance, width, drumsVsEverything, vocalLevel }
     // Match the overall section score to the cards currently shown in the UI.
