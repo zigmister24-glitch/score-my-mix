@@ -640,6 +640,11 @@ export default function App() {
     [sections, activeSectionId],
   )
 
+  const markSectionTimingDirty = () => {
+    setSectionMapDirty(true)
+    setSectionMapStatus('Unsaved section timing')
+  }
+
   useEffect(() => {
     if (!activeSection) {
       setSectionStartInput('')
@@ -1024,12 +1029,12 @@ export default function App() {
   }
 
   const applySelectedSectionTiming = () => {
-    if (!audioBufferRef.current || !activeSection || activeSectionIndex < 0) return
+    if (!audioBufferRef.current || !activeSection || activeSectionIndex < 0) return false
     const start = parseSectionTime(sectionStartInput)
     const end = parseSectionTime(sectionEndInput)
     if (start === null || end === null) {
       setSectionMapStatus('Enter times as mm:ss, for example 01:14')
-      return
+      return false
     }
 
     const minGap = 3
@@ -1043,11 +1048,8 @@ export default function App() {
     if (activeSectionIndex > 0) boundaries[activeSectionIndex] = safeStart
     if (activeSectionIndex < sections.length - 1) boundaries[activeSectionIndex + 1] = safeEnd
 
-    // v0.94: timing edits now update locally and show a Save button instead
-    // of auto-saving immediately.
     rebuildSectionsFromBoundaries(boundaries, activeSection.id, true, false)
-    setSectionMapDirty(true)
-    setSectionMapStatus('Unsaved section timing')
+    return true
   }
 
   const nudgeSelectedSectionTiming = (edge: 'start' | 'end', amount: number) => {
@@ -1058,17 +1060,40 @@ export default function App() {
     else setSectionEndInput(next)
   }
 
-  const saveCurrentSectionMap = async () => {
-    if (!trackIdentity || !sections.length) return
+  const saveCurrentSectionMap = async (sectionsToSave = sections) => {
+    if (!trackIdentity || !sectionsToSave.length) return
     try {
       setSectionMapStatus('Saving section map...')
-      await saveSectionMap(trackIdentity, sections)
+      await saveSectionMap(trackIdentity, sectionsToSave)
       setSectionMapDirty(false)
       setSectionMapStatus('Saved section map')
     } catch (error) {
       console.error(error)
       setSectionMapStatus('Section map save failed - using local edits')
     }
+  }
+
+  const saveSelectedSectionTiming = async () => {
+    const timingApplied = applySelectedSectionTiming()
+    if (!timingApplied || !trackIdentity || !audioBufferRef.current || !activeSection || activeSectionIndex < 0) return
+
+    const start = parseSectionTime(sectionStartInput)
+    const end = parseSectionTime(sectionEndInput)
+    if (start === null || end === null) return
+
+    const minGap = 3
+    const boundaries = boundariesFromSections(sections)
+    const duration = audioBufferRef.current.duration
+    const previousLimit = activeSectionIndex === 0 ? 0 : (boundaries[activeSectionIndex - 1] ?? 0) + minGap
+    const nextLimit = activeSectionIndex === sections.length - 1 ? duration : (boundaries[activeSectionIndex + 2] ?? duration) - minGap
+    const safeStart = activeSectionIndex === 0 ? 0 : Math.max(previousLimit, Math.min(end - minGap, start))
+    const safeEnd = activeSectionIndex === sections.length - 1 ? duration : Math.min(nextLimit, Math.max(safeStart + minGap, end))
+
+    if (activeSectionIndex > 0) boundaries[activeSectionIndex] = safeStart
+    if (activeSectionIndex < sections.length - 1) boundaries[activeSectionIndex + 1] = safeEnd
+
+    const nextSections = buildSections(audioBufferRef.current, boundaries)
+    await saveCurrentSectionMap(nextSections)
   }
 
   const resetSectionMap = async () => {
@@ -1171,7 +1196,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.94</span>
+              <span className="version-pill">v0.95</span>
             </div>
           </div>
 
@@ -1371,8 +1396,11 @@ export default function App() {
                       <span>Start</span>
                       <input
                         value={sectionStartInput}
-                        onChange={(event) => setSectionStartInput(event.target.value)}
-                        onKeyDown={(event) => { if (event.key === 'Enter') applySelectedSectionTiming() }}
+                        onChange={(event) => {
+                          setSectionStartInput(event.target.value)
+                          markSectionTimingDirty()
+                        }}
+                        onKeyDown={(event) => { if (event.key === 'Enter') saveSelectedSectionTiming() }}
                       />
                     </label>
                     <span className="section-time-arrow">→</span>
@@ -1380,14 +1408,16 @@ export default function App() {
                       <span>End</span>
                       <input
                         value={sectionEndInput}
-                        onChange={(event) => setSectionEndInput(event.target.value)}
-                        onKeyDown={(event) => { if (event.key === 'Enter') applySelectedSectionTiming() }}
+                        onChange={(event) => {
+                          setSectionEndInput(event.target.value)
+                          markSectionTimingDirty()
+                        }}
+                        onKeyDown={(event) => { if (event.key === 'Enter') saveSelectedSectionTiming() }}
                       />
                     </label>
                   </div>
                   <div className="section-editor-actions stacked-section-actions">
-                    <button className="nav-button" onClick={applySelectedSectionTiming} disabled={!activeSection}>Apply timing</button>
-                    <button className="nav-button" onClick={saveCurrentSectionMap} disabled={!sectionMapDirty}>Save sections</button>
+                    {sectionMapDirty ? <button className="nav-button" onClick={saveSelectedSectionTiming} disabled={!activeSection}>Save section</button> : null}
                     <button className="nav-button" onClick={() => activeSection && deleteSection(activeSection.id)} disabled={sections.length <= 1}>Delete section</button>
                     {activeSectionIndex > 0 ? <button className="nav-button" onClick={() => activeSection && addSectionSplit(activeSection.id)}>Insert section</button> : null}
                   </div>
