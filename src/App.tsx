@@ -1196,7 +1196,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.95</span>
+              <span className="version-pill">v0.96</span>
             </div>
           </div>
 
@@ -1392,6 +1392,11 @@ export default function App() {
                 </div>
                 <div className="section-timing-editor inline-section-editor">
                   <div className="section-time-fields centered-time-fields">
+                    {activeSectionIndex > 0 ? (
+                      <button className="nav-button" onClick={() => activeSection && addSectionSplit(activeSection.id)}>
+                        Insert section
+                      </button>
+                    ) : null}
                     <label>
                       <span>Start</span>
                       <input
@@ -1419,7 +1424,6 @@ export default function App() {
                   <div className="section-editor-actions stacked-section-actions">
                     {sectionMapDirty ? <button className="nav-button" onClick={saveSelectedSectionTiming} disabled={!activeSection}>Save section</button> : null}
                     <button className="nav-button" onClick={() => activeSection && deleteSection(activeSection.id)} disabled={sections.length <= 1}>Delete section</button>
-                    {activeSectionIndex > 0 ? <button className="nav-button" onClick={() => activeSection && addSectionSplit(activeSection.id)}>Insert section</button> : null}
                   </div>
                 </div>
                 <div className="selected-actions">
