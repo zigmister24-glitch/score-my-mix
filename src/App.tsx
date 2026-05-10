@@ -448,7 +448,8 @@ async function submitLeaderboardEntry(entry: LeaderboardEntry): Promise<Leaderbo
 
 
 function metricLabel(name: keyof SectionAnalysis['metrics']) {
-  if (name === 'tonalBalance') return 'Tonal balance'
+  if (name === 'clarity') return 'Density'
+  if (name === 'tonalBalance') return 'Tonal Balance'
   if (name === 'drumsVsEverything') return 'Drums'
   if (name === 'vocalLevel') return 'Vocals'
   return name.charAt(0).toUpperCase() + name.slice(1)
@@ -990,7 +991,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.82</span>
+              <span className="version-pill">v0.85</span>
             </div>
           </div>
 
@@ -1209,7 +1210,6 @@ export default function App() {
                   {activeMetric === 'tonalBalance' && activeTonalBands.length > 0 && (
                     <div className="tonal-balance-panel">
                       <div className="tonal-strip-card">
-                        <strong>Tonal balance strip</strong>
                         <div className="tonal-band-list">
                           {activeTonalBands.map((band) => {
                             const position = Math.max(6, Math.min(94, 50 + band.deviationPercent * 2.2))
@@ -1234,12 +1234,11 @@ export default function App() {
                   {activeMetric === 'clarity' && activeClarityBands.length > 0 && (
                     <div className="tonal-balance-panel">
                       <div className="tonal-strip-card">
-                        <strong>Clarity clash strip</strong>
                         <div className="tonal-band-list">
                           {activeClarityBands.map((band) => {
                             const position = Math.max(6, Math.min(94, 50 + band.deviationPercent * 2.2))
                             const displayValue = Math.abs(band.displayPercent ?? band.deviationPercent)
-                            const readout = band.status === 'good' ? 'Good' : `${displayValue}% clash`
+                            const readout = band.status === 'good' ? 'Good' : `${displayValue}% over`
                             return (
                               <button
                                 className={`tonal-band-row tonal-${band.severity}`}
@@ -1255,16 +1254,15 @@ export default function App() {
                         </div>
                       </div>
                       <div className="clarity-workflow-card">
-                        <strong>Clarity check workflow</strong>
-                        <p>Dense synths, pads, and layered sounds can naturally create clarity density. That can be normal, especially when the sound is wide or intentionally saturated.</p>
-                        <p>To isolate real masking, test one bus at a time: start with Synths/Pads, then add Guitars, then Drums, and add Vocals last. Watch which stage introduces blur or loss of separation.</p>
+                        <strong>Density check workflow</strong>
+                        <p>Dense synths, pads, bass, and layered sounds can naturally create density. That can be normal, especially when the sound is wide, warm, or intentionally saturated.</p>
+                        <p>If Density looks high, check Tonal Balance before cutting EQ. To isolate real masking, test one bus at a time: start with Synths/Pads, then add Guitars, then Drums, and add Vocals last.</p>
                       </div>
                     </div>
                   )}
                   {activeLevelBalance && (
                     <div className="level-balance-panel">
                       <div className="tonal-strip-card">
-                        <strong>{activeLevelBalance.label} level strip</strong>
                         <div className="tonal-band-list">
                           {(() => {
                             const position = Math.max(6, Math.min(94, 50 + activeLevelBalance.deviationPercent * 2.2))
@@ -1300,7 +1298,6 @@ export default function App() {
                   {activeImpactBalance && (
                     <div className="level-balance-panel">
                       <div className="tonal-strip-card">
-                        <strong>{activeImpactBalance.key === 'curiosity' ? 'Curiosity strip' : 'Impact strip'}</strong>
                         <div className="tonal-band-list">
                           {(() => {
                             const position = Math.max(6, Math.min(94, 50 + activeImpactBalance.deviationPercent * 2.2))
@@ -1324,7 +1321,6 @@ export default function App() {
                   {activeMetric === 'width' && activeWidthBalance.length > 0 && (
                     <div className="level-balance-panel">
                       <div className="tonal-strip-card">
-                        <strong>Centre / Sides / Space / Movement strip</strong>
                         <div className="tonal-band-list">
                           {activeWidthBalance.map((item) => {
                             const position = Math.max(6, Math.min(94, 50 + item.deviationPercent * 2.2))
@@ -1346,7 +1342,7 @@ export default function App() {
                     </div>
                   )}
                   <div className="metric-detail-copy">
-                    <p><strong>What it means:</strong> {activeMetricInsight.meaning}</p>
+                    <p><strong>What {activeMetric === 'clarity' ? 'Density' : (activeMetric === 'impact' && activeSectionUsesCuriosity ? 'Curiosity' : metricLabel(activeMetric))} means:</strong> {activeMetricInsight.meaning}</p>
                     <p><strong>What affects it here:</strong> {activeMetricInsight.influencedBy}</p>
                     <p><strong>Current read:</strong> {activeMetricInsight.currentRead}</p>
                   </div>

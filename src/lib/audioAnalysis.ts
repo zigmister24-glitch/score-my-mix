@@ -299,10 +299,10 @@ function buildTonalBalanceBands(samples: Float32Array, sampleRate: number, start
   const total = Math.max(0.0001, low + lowMid + mid + high)
 
   return [
-    makeTonalBand('weight', 'Weight', 'Lows', low / total, 0.28, 'Add kick/bass weight or lift low-end elements about +1–2 dB.', 'Bass too dominant. Try reducing bass or kick about -1–2 dB.'),
-    makeTonalBand('body', 'Body', 'Low-mids', lowMid / total, 0.24, 'Add body with guitar, pad, or a gentle 180–300 Hz lift.', 'Low-mid buildup. Cut 150–300 Hz on guitars, pads, or reverb returns.'),
-    makeTonalBand('core', 'Core', 'Mids', mid / total, 0.32, 'Mids are thin. Increase guitar/synth about +1–2 dB or add acoustic/pad support.', 'Midrange crowded. Pull supporting guitars/synths back about -1 dB or cut 500 Hz–1 kHz.'),
-    makeTonalBand('air', 'Air', 'Highs', high / total, 0.16, 'Add clarity with shaker, cymbal air, or a gentle 8–12 kHz lift.', 'Top end is bright. Reduce hats/cymbals or harsh 6–10 kHz by about -1 dB.'),
+    makeTonalBand('weight', 'Weight', 'Lows · 20–120 Hz', low / total, 0.28, 'Add kick/bass weight or lift low-end elements about +1–2 dB.', 'Bass too dominant. Try reducing bass or kick about -1–2 dB.'),
+    makeTonalBand('body', 'Body', 'Low-mids · 120–350 Hz', lowMid / total, 0.24, 'Add body with guitar, pad, or a gentle 180–300 Hz lift.', 'Low-mid buildup. Cut 150–300 Hz on guitars, pads, or reverb returns.'),
+    makeTonalBand('core', 'Core', 'Mids · 350 Hz–2 kHz', mid / total, 0.32, 'Mids are thin. Increase guitar/synth about +1–2 dB or add acoustic/pad support.', 'Midrange crowded. Pull supporting guitars/synths back about -1 dB or cut 500 Hz–1 kHz.'),
+    makeTonalBand('air', 'Air', 'Highs · 5–12 kHz', high / total, 0.16, 'Add clarity with shaker, cymbal air, or a gentle 8–12 kHz lift.', 'Top end is bright. Reduce hats/cymbals or harsh 6–10 kHz by about -1 dB.'),
   ]
 }
 
@@ -717,19 +717,19 @@ function primaryClarityRecommendation(bands: BalanceStripItem[], clarity: number
   const biggest = [...bands].sort((a, b) => Math.abs(b.deviationPercent) - Math.abs(a.deviationPercent))[0]
   if (!biggest || biggest.severity === 'good') {
     return {
-      title: 'Clarity is close. Protect the clean bands',
+      title: 'Density is close. Protect the clean bands',
       detail: 'No obvious clash band is shouting for attention. Check the vocal against the guitars before making small EQ moves.',
       priority: 'Worth exploring',
-      estimatedLift: '+1 to +3 clarity',
+      estimatedLift: '+1 to +3 density',
       target: 'Instruments',
     }
   }
 
   return {
     title: biggest.action,
-    detail: `${biggest.label} (${biggest.range}) shows ${Math.abs(biggest.deviationPercent)}% clash. Fix this band first, then re-score before chasing smaller clarity tweaks.`,
+    detail: `${biggest.label} (${biggest.range}) shows ${Math.abs(biggest.deviationPercent)}% over desired density. Check whether it is musical first, then re-score before chasing smaller density tweaks.`,
     priority: biggest.severity === 'fix' || clarity < 70 ? 'High impact' : 'Worth exploring',
-    estimatedLift: biggest.severity === 'fix' || clarity < 70 ? '+4 to +9 clarity' : '+2 to +5 clarity',
+    estimatedLift: biggest.severity === 'fix' || clarity < 70 ? '+4 to +9 density' : '+2 to +5 density',
     target: 'Instruments',
   }
 }
@@ -738,17 +738,17 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
   const dominantRecommendation = recommendations[0]
   return {
     clarity: {
-      title: 'Clarity',
-      meaning: 'How easily the important parts can be heard and separated in this moment of the mix.',
-      influencedBy: 'Masking, low-mid density, vocal presence, and how much elements overlap.',
+      title: 'Density - How crowded or accumulated does each region feel?',
+      meaning: 'How much energy is accumulating in each frequency region, and whether that density feels controlled or congested.',
+      influencedBy: 'Layering, saturation, low-mid warmth, reverb tails, bass harmonics, vocal presence, and how much elements overlap.',
       currentRead:
         metrics.clarity >= 74
-          ? 'This section reads clearly and the main ideas come through without much effort.'
-          : `This section is a little cloudier. Biggest contributor here: ${dominantRecommendation.title.toLowerCase()}.`,
+          ? 'The density feels controlled enough that the main ideas still read clearly.'
+          : `This section may be carrying too much density in one area. Biggest contributor here: ${dominantRecommendation.title.toLowerCase()}.`,
     },
     impact: isIntro
       ? {
-          title: 'Curiosity',
+          title: 'Curiosity - How much variation, contrast, and listener interest exists in this section?',
           meaning: 'How strongly the intro makes a listener want to keep listening.',
           influencedBy: 'Early movement, signature texture, rhythmic identity, stereo intrigue, tension, and how quickly the intro declares a personality.',
           currentRead:
@@ -759,7 +759,7 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
                 : 'The intro may need a clearer hook, texture, groove, or tension cue in the first few seconds.',
         }
       : {
-          title: 'Impact',
+          title: 'Impact - How much punch, energy, and movement does this section create?',
           meaning: 'How strongly this section hits in energy, punch, and movement.',
           influencedBy: 'Transient shape, low-end control, density, and how much the section contrasts with the one before it.',
           currentRead:
@@ -768,7 +768,7 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
               : 'This moment could hit harder if the drums, low end, or transient focus were a touch more assertive.',
         },
     tonalBalance: {
-      title: 'Tonal balance',
+      title: 'Tonal Balance - How much energy exists in each region?',
       meaning: 'How even the frequency spread feels from lows through highs in this section.',
       influencedBy: 'Low-end weight, low-mid build-up, presence energy, top-end sheen, and genre expectations.',
       currentRead:
@@ -788,7 +788,7 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
             : 'The drums may be getting swallowed by everything else. Start here before chasing smaller polish moves.',
     },
     vocalLevel: {
-      title: 'Vocals',
+      title: 'Vocals - How clearly and consistently do the vocals sit in the mix?',
       meaning: 'Whether the vocal level feels anchored against the rest of the mix.',
       influencedBy: 'Vocal fader level, automation, compression, 1–4 kHz presence, masking from guitars/synths, and how dense the section is.',
       currentRead:
@@ -799,7 +799,7 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
             : 'The vocal may not be owning its space yet. A small fader move or clearing 2–4 kHz in the instruments could be the quick win.',
     },
     width: {
-      title: 'Width',
+      title: 'Width - How wide and immersive does the stereo image feel?',
       meaning: 'How the stereo field supports the section: centre strength, side space, and whether the mix expands or contracts with emotional intent.',
       influencedBy: 'Centre-vs-side contrast, panning automation, doubled parts, pads, delay/reverb spread, mono compatibility, and width movement from the previous section.',
       currentRead:
@@ -993,7 +993,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[]):
               : 'Nothing feels wildly unruly here, which gives you a steady base to build from.',
       },
       {
-        title: clarity >= 72 ? 'Clarity is landing well' : 'There is a recognisable tonal identity',
+        title: clarity >= 72 ? 'Density is landing well' : 'There is a recognisable tonal identity',
         detail:
           clarity >= 72
             ? 'Important elements are reading well without needing to fight for attention.'
