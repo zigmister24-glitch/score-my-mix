@@ -9,6 +9,8 @@ declare global {
   }
 }
 
+const IS_LOCAL_DEV = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+
 const ACCEPTED_TYPES = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac']
 const GENRE_PROFILES = {
   'Modern Pop': { tonal: { weight: 0, body: 0, core: 0, air: 0 }, vocals: 0 },
@@ -325,6 +327,8 @@ function mapApiEntry(entry: any): LeaderboardEntry {
 
 
 async function readSectionMap(track: TrackIdentityState, genre?: GenreProfileName): Promise<SavedSectionMap | null> {
+  if (IS_LOCAL_DEV) return null
+
   try {
     const params = new URLSearchParams({
       normalized_title: track.normalizedTitle,
@@ -346,6 +350,8 @@ async function readSectionMap(track: TrackIdentityState, genre?: GenreProfileNam
 }
 
 async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalysis[], genre?: GenreProfileName) {
+  if (IS_LOCAL_DEV) return { ok: true, local: true }
+
   const payload = {
     normalized_title: track.normalizedTitle,
     title: track.title,
@@ -378,6 +384,8 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
 }
 
 async function deleteSectionMap(track: TrackIdentityState, genre?: GenreProfileName) {
+  if (IS_LOCAL_DEV) return { ok: true, local: true }
+
   const res = await fetch('/api/section-map', {
     method: 'DELETE',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -422,6 +430,8 @@ async function readLeaderboard(): Promise<{
   allTime: LeaderboardEntry[]
   hotStreak: LeaderboardEntry[]
 }> {
+  if (IS_LOCAL_DEV) return { allTime: [], hotStreak: [] }
+
   try {
     const res = await fetch('/api/leaderboard', {
       method: 'GET',
@@ -450,6 +460,8 @@ async function readLeaderboard(): Promise<{
 }
 
 async function submitLeaderboardEntry(entry: LeaderboardEntry): Promise<LeaderboardResponse | null> {
+  if (IS_LOCAL_DEV) return null
+
   try {
     const res = await fetch('/api/leaderboard', {
       method: 'POST',
@@ -815,7 +827,7 @@ export default function App() {
           const boards = await readLeaderboard()
           setLeaderboard(boards.allTime)
           setLeaderboardLast30(boards.hotStreak)
-          setLeaderboardMessage('Global leaderboard unavailable right now. Your mix still scored locally on this page.')
+          setLeaderboardMessage('Local Mode: leaderboards and saved maps are disabled. Your mix still scored locally on this page.')
         }
       } else {
         const boards = await readLeaderboard()
@@ -1231,7 +1243,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.98</span>
+              <span className="version-pill">v1.00</span>
             </div>
           </div>
 
