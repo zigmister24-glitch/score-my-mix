@@ -17,7 +17,7 @@ const GENRE_PROFILES = {
   'EDM / Dance': { tonal: { weight: 8, body: -2, core: -2, air: 4 }, vocals: -1 },
   'Rock': { tonal: { weight: 2, body: 5, core: 4, air: -2 }, vocals: 0 },
   'Metal / Nu Metal': { tonal: { weight: 5, body: 3, core: 5, air: 1 }, vocals: 1 },
-  'Hip Hop / Trap': { tonal: { weight: 10, body: 2, core: -3, air: 2 }, vocals: 1 },
+  'Hip Hop / Rap': { tonal: { weight: 10, body: 2, core: -3, air: 2 }, vocals: 1 },
   'Singer Songwriter': { tonal: { weight: -3, body: 2, core: 5, air: 2 }, vocals: 2 },
   'Cinematic / Trailer': { tonal: { weight: 8, body: 6, core: -2, air: 1 }, vocals: 0 },
   'Scarlett Lullaby': { tonal: { weight: 5, body: 4, core: 1, air: 2 }, vocals: 1 },
@@ -428,21 +428,26 @@ async function readSongGenre(track: TrackIdentityState): Promise<GenreProfileNam
 async function saveSongGenre(track: TrackIdentityState, genre: GenreProfileName) {
   if (IS_LOCAL_DEV || track.durationSeconds < 60) return { ok: true, local: true }
 
+  const payload = {
+    normalized_title: track.normalizedTitle,
+    title: track.title,
+    artist: track.artist,
+    display_name: track.displayName,
+    duration_seconds: track.durationSeconds,
+    genre,
+  }
+
   const res = await fetch('/api/song-genre', {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      normalized_title: track.normalizedTitle,
-      title: track.title,
-      artist: track.artist,
-      display_name: track.displayName,
-      duration_seconds: track.durationSeconds,
-      genre,
-    }),
+    body: JSON.stringify(payload),
   })
 
   const data = await res.json().catch(() => ({ ok: false, error: 'Invalid response' }))
-  if (!res.ok || !data.ok) throw new Error(data.error || 'Song genre save failed')
+  if (!res.ok || !data.ok) {
+    console.warn('Song genre endpoint failed:', data)
+    return { ok: false, error: data.error || 'Song genre save failed' }
+  }
   return data
 }
 
@@ -1198,13 +1203,9 @@ export default function App() {
     if (!trackIdentity || !audioBufferRef.current) return
 
     setSectionMapStatus('Saving genre profile...')
-    try {
-      await saveSongGenre(trackIdentity, nextGenre)
-    } catch (error) {
-      console.warn('Could not save song genre:', error)
-    }
+    const genreSaveResult = await saveSongGenre(trackIdentity, nextGenre)
 
-    setSectionMapStatus('Loading genre profile...')
+    setSectionMapStatus(genreSaveResult?.ok === false ? 'Genre profile loaded - DB save failed' : 'Loading genre profile...')
     const savedMap = await readSectionMap(trackIdentity, nextGenre)
     const boundaries = savedMap
       ? boundariesFromSectionMap(savedMap, audioBufferRef.current.duration)
@@ -1321,7 +1322,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.105</span>
+              <span className="version-pill">v0.106</span>
             </div>
           </div>
 
