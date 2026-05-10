@@ -890,10 +890,23 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[]):
     const transientStrength = clamp((transientEnergy / Math.max(0.0001, fullRms)) * 220, 0, 1)
     const movement = clamp((zcr * 550) + transientStrength * 0.45, 0, 1)
     const contrastScore = clamp(0.5 + sectionLift, 0, 1)
-    const normalImpact = clamp(Math.round(56 + contrastScore * 16 + transientStrength * 14 + movement * 8 + Math.min(4, sectionDuration * 0.12)), 42, 94)
+    const rawImpact = clamp(Math.round(56 + contrastScore * 16 + transientStrength * 14 + movement * 8 + Math.min(4, sectionDuration * 0.12)), 42, 94)
+    const rawImpactStrip = makeImpactStrip(rawImpact, contrastScore, transientStrength, movement)
+    const impactLiftPercent = clamp(Math.max(0, rawImpactStrip.deviationPercent), 0, 23)
+
+    // v0.91: Keep the original Impact strip/detection logic, then translate the
+    // visible Impact score directly from the strip lift:
+    // 0% lift  -> 80%
+    // 23%+ lift -> 100%
+    const normalImpact = clamp(
+      Math.round(80 + (impactLiftPercent / 23) * 20),
+      80,
+      100,
+    )
+
     const curiosity = scoreCuriosity(channel, buffer, sampleRate, startIndex, endIndex, fullRms, zcr, transientStrength, stereoWidth)
     const impact = i === 0 ? curiosity : normalImpact
-    const impactStrip = i === 0 ? makeCuriosityStrip(curiosity) : makeImpactStrip(impact, contrastScore, transientStrength, movement)
+    const impactStrip = i === 0 ? makeCuriosityStrip(curiosity) : rawImpactStrip
     const coreStereoSeparation = buffer.numberOfChannels >= 2
       ? (
         estimateBandStereoSeparation(buffer, sampleRate, startIndex, endIndex, 520, 0.9)

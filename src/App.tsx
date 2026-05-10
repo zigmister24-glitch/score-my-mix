@@ -3,6 +3,12 @@ import WaveformPanel, { WaveformHandle } from './components/WaveformPanel'
 import { buildSections, decodeAudioFile, formatTime } from './lib/audioAnalysis'
 import { SectionAnalysis } from './lib/types'
 
+declare global {
+  interface Window {
+    webkitOfflineAudioContext?: typeof OfflineAudioContext
+  }
+}
+
 const ACCEPTED_TYPES = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac']
 const METRIC_ORDER: Array<keyof SectionAnalysis['metrics']> = ['clarity', 'impact', 'tonalBalance', 'vocalLevel', 'width']
 
@@ -221,7 +227,7 @@ function impactReadout(item: ImpactStrip) {
   }
   if (item.status === 'low') return `${amount}% flat`
   if (item.status === 'high') return amount >= 31 ? `${amount}% huge lift` : `${amount}% big lift`
-  return item.deviationPercent > 3 ? 'Energetic' : 'Good'
+  return `${amount}% lift`
 }
 
 function widthReadout(item: BalanceStripItem) {
@@ -331,11 +337,18 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
     artist: track.artist,
     display_name: track.displayName,
     duration_seconds: track.durationSeconds,
-    sections: sections.map((section) => ({
-      start: Number(section.start.toFixed(3)),
-      end: Number(section.end.toFixed(3)),
-      label: section.label,
-    })),
+    sections: sections.map((section, index) => {
+      const isLastSection = index === sections.length - 1
+      const savedEnd = isLastSection
+        ? Math.max(section.end, Math.ceil(section.end) - 0.01)
+        : section.end
+
+      return {
+        start: Number(section.start.toFixed(3)),
+        end: Number(savedEnd.toFixed(3)),
+        label: section.label,
+      }
+    }),
   }
 
   const res = await fetch('/api/section-map', {
@@ -369,7 +382,17 @@ function boundariesFromSectionMap(map: SavedSectionMap, durationSeconds: number)
     if (Number.isFinite(section.end)) boundaries.push(section.end)
   }
   boundaries.push(durationSeconds)
-  return [...new Set(boundaries.map((value) => Math.max(0, Math.min(durationSeconds, Number(value)))))]
+
+  // v0.93: Saved maps can contain a final end such as 03:09.99 so the UI feels
+  // natural, but the audio duration may round to the next second on reload.
+  // Snap any boundary very close to the end back to the real duration so we do
+  // not create a tiny ghost section at the end of the song.
+  const snapped = boundaries.map((value) => {
+    const numericValue = Math.max(0, Math.min(durationSeconds, Number(value)))
+    return durationSeconds - numericValue <= 1.01 ? durationSeconds : numericValue
+  })
+
+  return [...new Set(snapped)]
     .sort((a, b) => a - b)
 }
 
@@ -474,6 +497,110 @@ function parseSectionTime(value: string) {
 }
 
 
+
+function interleaveChannels(left: Float32Array, right: Float32Array) {
+  const length = left.length + right.length
+  const result = new Float32Array(length)
+  let outputIndex = 0
+
+  for (let inputIndex = 0; inputIndex < left.length; inputIndex += 1) {
+    result[outputIndex++] = left[inputIndex]
+    result[outputIndex++] = right[inputIndex]
+  }
+
+  return result
+}
+
+function writeString(view: DataView, offset: number, value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index))
+  }
+}
+
+function floatTo16BitPcm(view: DataView, offset: number, input: Float32Array) {
+  let writeOffset = offset
+
+  for (let index = 0; index < input.length; index += 1, writeOffset += 2) {
+    const sample = Math.max(-1, Math.min(1, input[index]))
+    view.setInt16(writeOffset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
+  }
+}
+
+function audioBufferToWav(buffer: AudioBuffer) {
+  const numberOfChannels = Math.min(buffer.numberOfChannels, 2)
+  const sampleRate = buffer.sampleRate
+  const bitDepth = 16
+  const bytesPerSample = bitDepth / 8
+  const blockAlign = numberOfChannels * bytesPerSample
+
+  let samples: Float32Array
+  if (numberOfChannels === 2) {
+    samples = interleaveChannels(buffer.getChannelData(0), buffer.getChannelData(1))
+  } else {
+    samples = buffer.getChannelData(0)
+  }
+
+  const wavBuffer = new ArrayBuffer(44 + samples.length * bytesPerSample)
+  const view = new DataView(wavBuffer)
+
+  writeString(view, 0, 'RIFF')
+  view.setUint32(4, 36 + samples.length * bytesPerSample, true)
+  writeString(view, 8, 'WAVE')
+  writeString(view, 12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, numberOfChannels, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * blockAlign, true)
+  view.setUint16(32, blockAlign, true)
+  view.setUint16(34, bitDepth, true)
+  writeString(view, 36, 'data')
+  view.setUint32(40, samples.length * bytesPerSample, true)
+  floatTo16BitPcm(view, 44, samples)
+
+  return wavBuffer
+}
+
+async function renderAirContour(audioBuffer: AudioBuffer, gainDb: number, frequency: number) {
+  const OfflineAudio = window.OfflineAudioContext || window.webkitOfflineAudioContext
+  if (!OfflineAudio) {
+    throw new Error('OfflineAudioContext is not supported in this browser.')
+  }
+
+  const offlineContext = new OfflineAudio(
+    audioBuffer.numberOfChannels,
+    audioBuffer.length,
+    audioBuffer.sampleRate,
+  )
+
+  const source = offlineContext.createBufferSource()
+  source.buffer = audioBuffer
+
+  const airShelf = offlineContext.createBiquadFilter()
+  airShelf.type = 'highshelf'
+  airShelf.frequency.value = frequency
+  airShelf.gain.value = gainDb
+
+  source.connect(airShelf)
+  airShelf.connect(offlineContext.destination)
+  source.start(0)
+
+  return offlineContext.startRendering()
+}
+
+function safeDownloadName(fileName: string, gainDb: number, frequency: number) {
+  const baseName = stripExtension(fileName || 'mix')
+    .replace(/[^a-z0-9-_]+/gi, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+
+  const gainTag = gainDb >= 0 ? `plus-${gainDb.toFixed(1)}` : `minus-${Math.abs(gainDb).toFixed(1)}`
+  const freqTag = `${Math.round(frequency / 1000)}k`
+
+  return `${baseName || 'mix'}-air-${gainTag}db-${freqTag}.wav`
+}
+
+
 export default function App() {
   const [dragActive, setDragActive] = useState(false)
   const [fileUrl, setFileUrl] = useState<string | null>(null)
@@ -498,6 +625,10 @@ export default function App() {
   const [sectionMapDirty, setSectionMapDirty] = useState(false)
   const [sectionStartInput, setSectionStartInput] = useState('')
   const [sectionEndInput, setSectionEndInput] = useState('')
+  const [airRenderBusy, setAirRenderBusy] = useState(false)
+  const [airGainDb, setAirGainDb] = useState(1)
+  const [airFreq, setAirFreq] = useState(10000)
+  const [hasAudioBuffer, setHasAudioBuffer] = useState(false)
 
   const activeSectionIndex = useMemo(
     () => sections.findIndex((section) => section.id === activeSectionId),
@@ -574,6 +705,7 @@ export default function App() {
 
       const buffer = await decodeAudioFile(file)
       audioBufferRef.current = buffer
+      setHasAudioBuffer(true)
       const autoSections = buildSections(buffer)
       autoSectionsRef.current = autoSections
       const identity = await inferTrackIdentity(file)
@@ -698,7 +830,43 @@ export default function App() {
     await handleFile(file)
   }
 
-  const overallScoreExact = sections.length
+
+  const handleRenderAir = async () => {
+    const sourceBuffer = audioBufferRef.current
+    if (!sourceBuffer || airRenderBusy) return
+
+    try {
+      setAirRenderBusy(true)
+      console.log('Rendering Air Contour', {
+        gainDb: airGainDb,
+        frequency: airFreq,
+        duration: sourceBuffer.duration,
+        channels: sourceBuffer.numberOfChannels,
+      })
+
+      const rendered = await renderAirContour(sourceBuffer, airGainDb, airFreq)
+      const wavBuffer = audioBufferToWav(rendered)
+      const blob = new Blob([wavBuffer], { type: 'audio/wav' })
+      const url = URL.createObjectURL(blob)
+
+      const link = document.createElement('a')
+      link.href = url
+      link.download = safeDownloadName(fileName, airGainDb, airFreq)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      alert('Air contour WAV rendered successfully')
+    } catch (err) {
+      console.error(err)
+      alert('Failed to render Air contour WAV. Check the browser console for details.')
+    } finally {
+      setAirRenderBusy(false)
+    }
+  }
+
+    const overallScoreExact = sections.length
     ? sections.reduce((sum, section) => sum + section.score, 0) / sections.length
     : 0
 
@@ -991,7 +1159,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.85</span>
+              <span className="version-pill">v0.93</span>
             </div>
           </div>
 
@@ -1000,6 +1168,50 @@ export default function App() {
             <span className="upload-title">Click or drag to score your mix.</span>
             <span className="upload-subtitle">Stereo WAV works best, but MP3 and M4A work too. Uploads must be 1 to 15 minutes long. 48k / 24-bit WAV is perfect.</span>
           </label>
+
+          <div className="air-contour-lab">
+            <div className="air-contour-copy">
+              <span className="air-contour-title">Air Contour Lab</span>
+              <span className="air-contour-subtitle">Render a test WAV with a high-shelf air move, then re-upload it to compare scores.</span>
+            </div>
+
+            <div className="air-contour-controls">
+              <label className="air-contour-control">
+                <span>Gain</span>
+                <input
+                  type="range"
+                  min="-10"
+                  max="10"
+                  step="0.1"
+                  value={airGainDb}
+                  onChange={(event) => setAirGainDb(Number(event.target.value))}
+                />
+                <strong>{airGainDb.toFixed(1)} dB</strong>
+              </label>
+
+              <label className="air-contour-control">
+                <span>Freq</span>
+                <input
+                  type="range"
+                  min="6000"
+                  max="14000"
+                  step="100"
+                  value={airFreq}
+                  onChange={(event) => setAirFreq(Number(event.target.value))}
+                />
+                <strong>{Math.round(airFreq / 100) / 10} kHz</strong>
+              </label>
+
+              <button
+                className="air-contour-button"
+                type="button"
+                onClick={handleRenderAir}
+                disabled={!hasAudioBuffer || airRenderBusy}
+              >
+                {airRenderBusy ? 'Rendering…' : 'Render Air'}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="leaderboard-inline-grid leaderboard-inline-grid-top">

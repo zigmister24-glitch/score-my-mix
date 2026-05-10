@@ -1080,3 +1080,82 @@ button, input { font: inherit; }
 }
 .clarity-workflow-card strong { display: block; margin-bottom: 8px; color: #bfdbfe; }
 .clarity-workflow-card p { margin: 6px 0 0; color: #aebadb; line-height: 1.45; }
+
+
+.air-contour-lab {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(86, 128, 210, 0.35);
+  border-radius: 18px;
+  background: rgba(14, 24, 46, 0.72);
+  display: grid;
+  gap: 12px;
+}
+
+.air-contour-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.air-contour-title {
+  font-weight: 900;
+  color: #f6f8ff;
+}
+
+.air-contour-subtitle {
+  color: #b8c5e4;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.air-contour-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.air-contour-control {
+  display: grid;
+  gap: 5px;
+  color: #b8c5e4;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.air-contour-control input[type='range'] {
+  width: 100%;
+}
+
+.air-contour-control strong {
+  color: #f6f8ff;
+  font-size: 0.82rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.air-contour-button {
+  border: 1px solid rgba(139, 92, 246, 0.65);
+  border-radius: 14px;
+  background: linear-gradient(135deg, #6d5dfc, #9b5cff);
+  color: #ffffff;
+  font-weight: 900;
+  padding: 11px 16px;
+  cursor: pointer;
+  box-shadow: 0 12px 30px rgba(123, 92, 246, 0.25);
+}
+
+.air-contour-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+@media (max-width: 860px) {
+  .air-contour-controls {
+    grid-template-columns: 1fr;
+  }
+}
+
