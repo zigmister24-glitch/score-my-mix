@@ -400,6 +400,52 @@ async function deleteSectionMap(track: TrackIdentityState, sectionGenre?: GenreP
   return data
 }
 
+async function readSongGenre(track: TrackIdentityState): Promise<GenreProfileName | null> {
+  if (IS_LOCAL_DEV || track.durationSeconds < 60) return null
+
+  try {
+    const params = new URLSearchParams({
+      normalized_title: track.normalizedTitle,
+      duration_seconds: String(track.durationSeconds),
+    })
+
+    const res = await fetch(`/api/song-genre?${params.toString()}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    })
+
+    if (!res.ok) throw new Error('Song genre load failed')
+    const data = await res.json()
+    const genre = data?.genre
+
+    return genre && genre in GENRE_PROFILES ? genre as GenreProfileName : null
+  } catch (error) {
+    console.warn('Song genre unavailable. Falling back to Modern Pop:', error)
+    return null
+  }
+}
+
+async function saveSongGenre(track: TrackIdentityState, genre: GenreProfileName) {
+  if (IS_LOCAL_DEV || track.durationSeconds < 60) return { ok: true, local: true }
+
+  const res = await fetch('/api/song-genre', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      normalized_title: track.normalizedTitle,
+      title: track.title,
+      artist: track.artist,
+      display_name: track.displayName,
+      duration_seconds: track.durationSeconds,
+      genre,
+    }),
+  })
+
+  const data = await res.json().catch(() => ({ ok: false, error: 'Invalid response' }))
+  if (!res.ok || !data.ok) throw new Error(data.error || 'Song genre save failed')
+  return data
+}
+
 function boundariesFromSectionMap(map: SavedSectionMap, durationSeconds: number) {
   const boundaries = [0]
   for (const section of map.sections) {
@@ -772,16 +818,17 @@ export default function App() {
       }
       setTrackIdentity(nextTrackIdentity)
 
-      const savedMap = await readSectionMap(nextTrackIdentity)
-      const loadedGenre = savedMap?.genre && savedMap.genre in GENRE_PROFILES
-        ? savedMap.genre
-        : 'Modern Pop'
+      const savedGenre = await readSongGenre(nextTrackIdentity)
+      const savedMap = await readSectionMap(nextTrackIdentity, savedGenre ?? undefined)
+      const loadedGenre = savedGenre
+        ?? (savedMap?.genre && savedMap.genre in GENRE_PROFILES ? savedMap.genre : 'Modern Pop')
+
       setSelectedGenre(loadedGenre)
       const nextSections = savedMap
         ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration), currentGenreProfile(loadedGenre))
         : buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
       autoSectionsRef.current = buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
-      setSectionMapStatus(savedMap ? `Saved ${loadedGenre} map loaded` : 'Auto-detected sections')
+      setSectionMapStatus(savedMap ? `Saved ${loadedGenre} map loaded` : `Genre - ${loadedGenre} loaded`)
       setSectionMapDirty(false)
 
       const nextOverallScore = nextSections.length
@@ -1150,6 +1197,13 @@ export default function App() {
     setSelectedGenre(nextGenre)
     if (!trackIdentity || !audioBufferRef.current) return
 
+    setSectionMapStatus('Saving genre profile...')
+    try {
+      await saveSongGenre(trackIdentity, nextGenre)
+    } catch (error) {
+      console.warn('Could not save song genre:', error)
+    }
+
     setSectionMapStatus('Loading genre profile...')
     const savedMap = await readSectionMap(trackIdentity, nextGenre)
     const boundaries = savedMap
@@ -1267,7 +1321,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.104</span>
+              <span className="version-pill">v0.105</span>
             </div>
           </div>
 
