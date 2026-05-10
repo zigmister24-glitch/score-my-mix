@@ -60,6 +60,9 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
   onSaveMap,
   onResetMap,
   sectionMapStatus,
+  selectedGenre,
+  genreOptions = [],
+  onGenreChange,
 }: WaveformPanelProps, ref) {
   const waveformRef = useRef<HTMLDivElement | null>(null)
   const waveSurferRef = useRef<WaveSurfer | null>(null)

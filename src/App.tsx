@@ -326,7 +326,7 @@ function mapApiEntry(entry: any): LeaderboardEntry {
 }
 
 
-async function readSectionMap(track: TrackIdentityState, genre?: GenreProfileName): Promise<SavedSectionMap | null> {
+async function readSectionMap(track: TrackIdentityState, sectionGenre?: GenreProfileName): Promise<SavedSectionMap | null> {
   if (IS_LOCAL_DEV) return null
 
   try {
@@ -334,7 +334,7 @@ async function readSectionMap(track: TrackIdentityState, genre?: GenreProfileNam
       normalized_title: track.normalizedTitle,
       duration_seconds: String(track.durationSeconds),
     })
-    if (genre && track.durationSeconds >= 60) params.set('genre', genre)
+    if (sectionGenre && track.durationSeconds >= 60) params.set('genre', sectionGenre)
     const res = await fetch(`/api/section-map?${params.toString()}`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
@@ -349,7 +349,7 @@ async function readSectionMap(track: TrackIdentityState, genre?: GenreProfileNam
   }
 }
 
-async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalysis[], genre?: GenreProfileName) {
+async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalysis[], sectionGenre?: GenreProfileName) {
   if (IS_LOCAL_DEV) return { ok: true, local: true }
 
   const payload = {
@@ -358,7 +358,7 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
     artist: track.artist,
     display_name: track.displayName,
     duration_seconds: track.durationSeconds,
-    genre: track.durationSeconds >= 60 ? genre : undefined,
+    genre: track.durationSeconds >= 60 ? sectionGenre : undefined,
     sections: sections.map((section, index) => {
       const isLastSection = index === sections.length - 1
       const savedEnd = isLastSection
@@ -383,7 +383,7 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
   return data
 }
 
-async function deleteSectionMap(track: TrackIdentityState, genre?: GenreProfileName) {
+async function deleteSectionMap(track: TrackIdentityState, sectionGenre?: GenreProfileName) {
   if (IS_LOCAL_DEV) return { ok: true, local: true }
 
   const res = await fetch('/api/section-map', {
@@ -392,7 +392,7 @@ async function deleteSectionMap(track: TrackIdentityState, genre?: GenreProfileN
     body: JSON.stringify({
       normalized_title: track.normalizedTitle,
       duration_seconds: track.durationSeconds,
-      genre: track.durationSeconds >= 60 ? genre : undefined,
+      genre: track.durationSeconds >= 60 ? sectionGenre : undefined,
     }),
   })
   const data = await res.json().catch(() => ({ ok: false, error: 'Invalid response' }))
@@ -1243,7 +1243,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v1.00</span>
+              <span className="version-pill">v0.102</span>
             </div>
           </div>
 
