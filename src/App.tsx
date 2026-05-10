@@ -10,6 +10,19 @@ declare global {
 }
 
 const ACCEPTED_TYPES = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac']
+const GENRE_PROFILES = {
+  'Modern Pop': { tonal: { weight: 0, body: 0, core: 0, air: 0 }, vocals: 0 },
+  'EDM / Dance': { tonal: { weight: 8, body: -2, core: -2, air: 4 }, vocals: -1 },
+  'Rock': { tonal: { weight: 2, body: 5, core: 4, air: -2 }, vocals: 0 },
+  'Metal / Nu Metal': { tonal: { weight: 5, body: 3, core: 5, air: 1 }, vocals: 1 },
+  'Hip Hop / Trap': { tonal: { weight: 10, body: 2, core: -3, air: 2 }, vocals: 1 },
+  'Singer Songwriter': { tonal: { weight: -3, body: 2, core: 5, air: 2 }, vocals: 2 },
+  'Cinematic / Trailer': { tonal: { weight: 8, body: 6, core: -2, air: 1 }, vocals: 0 },
+  'Scarlett Lullaby': { tonal: { weight: 5, body: 4, core: 1, air: 2 }, vocals: 1 },
+} as const
+
+type GenreProfileName = keyof typeof GENRE_PROFILES
+
 const METRIC_ORDER: Array<keyof SectionAnalysis['metrics']> = ['clarity', 'impact', 'tonalBalance', 'vocalLevel', 'width']
 
 type LeaderboardEntry = {
@@ -42,6 +55,7 @@ type SavedSectionMapItem = {
 type SavedSectionMap = {
   sections: SavedSectionMapItem[]
   source?: string
+  genre?: GenreProfileName
 }
 
 function stripExtension(name: string) {
@@ -310,12 +324,13 @@ function mapApiEntry(entry: any): LeaderboardEntry {
 }
 
 
-async function readSectionMap(track: TrackIdentityState): Promise<SavedSectionMap | null> {
+async function readSectionMap(track: TrackIdentityState, genre?: GenreProfileName): Promise<SavedSectionMap | null> {
   try {
     const params = new URLSearchParams({
       normalized_title: track.normalizedTitle,
       duration_seconds: String(track.durationSeconds),
     })
+    if (genre && track.durationSeconds >= 60) params.set('genre', genre)
     const res = await fetch(`/api/section-map?${params.toString()}`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
@@ -330,13 +345,14 @@ async function readSectionMap(track: TrackIdentityState): Promise<SavedSectionMa
   }
 }
 
-async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalysis[]) {
+async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalysis[], genre?: GenreProfileName) {
   const payload = {
     normalized_title: track.normalizedTitle,
     title: track.title,
     artist: track.artist,
     display_name: track.displayName,
     duration_seconds: track.durationSeconds,
+    genre: track.durationSeconds >= 60 ? genre : undefined,
     sections: sections.map((section, index) => {
       const isLastSection = index === sections.length - 1
       const savedEnd = isLastSection
@@ -361,13 +377,14 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
   return data
 }
 
-async function deleteSectionMap(track: TrackIdentityState) {
+async function deleteSectionMap(track: TrackIdentityState, genre?: GenreProfileName) {
   const res = await fetch('/api/section-map', {
     method: 'DELETE',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({
       normalized_title: track.normalizedTitle,
       duration_seconds: track.durationSeconds,
+      genre: track.durationSeconds >= 60 ? genre : undefined,
     }),
   })
   const data = await res.json().catch(() => ({ ok: false, error: 'Invalid response' }))
@@ -615,6 +632,7 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const [leaderboardLast30, setLeaderboardLast30] = useState<LeaderboardEntry[]>([])
   const [leaderboardMessage, setLeaderboardMessage] = useState('')
+  const [selectedGenre, setSelectedGenre] = useState<GenreProfileName>('Modern Pop')
   const [leaderboardLoading, setLeaderboardLoading] = useState(true)
   const analysisRef = useRef<HTMLElement | null>(null)
   const waveformApiRef = useRef<WaveformHandle | null>(null)
@@ -740,7 +758,7 @@ export default function App() {
       }
       setTrackIdentity(nextTrackIdentity)
 
-      const savedMap = await readSectionMap(nextTrackIdentity)
+      const savedMap = await readSectionMap(nextTrackIdentity, selectedGenre)
       const nextSections = savedMap
         ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration))
         : autoSections
@@ -974,7 +992,7 @@ export default function App() {
   const autoSaveSectionMap = (nextSections: SectionAnalysis[]) => {
     if (!trackIdentity || !nextSections.length) return
     setSectionMapStatus('Auto-saving section map...')
-    saveSectionMap(trackIdentity, nextSections)
+    saveSectionMap(trackIdentity, nextSections, selectedGenre)
       .then(() => {
         setSectionMapDirty(false)
         setSectionMapStatus('Section map auto-saved')
@@ -1064,7 +1082,7 @@ export default function App() {
     if (!trackIdentity || !sectionsToSave.length) return
     try {
       setSectionMapStatus('Saving section map...')
-      await saveSectionMap(trackIdentity, sectionsToSave)
+      await saveSectionMap(trackIdentity, sectionsToSave, selectedGenre)
       setSectionMapDirty(false)
       setSectionMapStatus('Saved section map')
     } catch (error) {
@@ -1104,8 +1122,25 @@ export default function App() {
     setSectionMapDirty(false)
     setSectionMapStatus('Reset to auto-detected sections')
     if (trackIdentity) {
-      try { await deleteSectionMap(trackIdentity) } catch (error) { console.warn('Could not delete saved section map:', error) }
+      try { await deleteSectionMap(trackIdentity, selectedGenre) } catch (error) { console.warn('Could not delete saved section map:', error) }
     }
+  }
+
+
+  const handleGenreChange = async (nextGenre: GenreProfileName) => {
+    setSelectedGenre(nextGenre)
+    if (!trackIdentity || !audioBufferRef.current) return
+
+    setSectionMapStatus('Loading genre section map...')
+    const savedMap = await readSectionMap(trackIdentity, nextGenre)
+    const nextSections = savedMap
+      ? buildSections(audioBufferRef.current, boundariesFromSectionMap(savedMap, audioBufferRef.current.duration))
+      : autoSectionsRef.current
+
+    setSections(nextSections)
+    setActiveSectionId(nextSections[0]?.id ?? null)
+    setSectionMapDirty(false)
+    setSectionMapStatus(savedMap ? `Saved ${nextGenre} map loaded` : `No saved ${nextGenre} map - using auto sections`)
   }
 
   const goToSection = (index: number, mode: 'seek' | 'play' = 'seek') => {
@@ -1196,7 +1231,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.96</span>
+              <span className="version-pill">v0.98</span>
             </div>
           </div>
 
@@ -1364,6 +1399,7 @@ export default function App() {
             </div>
           </section>
 
+
           <WaveformPanel
             ref={waveformApiRef}
             fileUrl={fileUrl}
@@ -1376,6 +1412,9 @@ export default function App() {
             editable={false}
             onResetMap={resetSectionMap}
             sectionMapStatus={`${sectionMapStatus}${sectionMapDirty ? ' *' : ''}`}
+            selectedGenre={selectedGenre}
+            genreOptions={Object.keys(GENRE_PROFILES) as GenreProfileName[]}
+            onGenreChange={handleGenreChange}
           />
 
           <section className="content-grid" ref={analysisRef}>
@@ -1392,11 +1431,6 @@ export default function App() {
                 </div>
                 <div className="section-timing-editor inline-section-editor">
                   <div className="section-time-fields centered-time-fields">
-                    {activeSectionIndex > 0 ? (
-                      <button className="nav-button" onClick={() => activeSection && addSectionSplit(activeSection.id)}>
-                        Insert section
-                      </button>
-                    ) : null}
                     <label>
                       <span>Start</span>
                       <input
@@ -1424,6 +1458,7 @@ export default function App() {
                   <div className="section-editor-actions stacked-section-actions">
                     {sectionMapDirty ? <button className="nav-button" onClick={saveSelectedSectionTiming} disabled={!activeSection}>Save section</button> : null}
                     <button className="nav-button" onClick={() => activeSection && deleteSection(activeSection.id)} disabled={sections.length <= 1}>Delete section</button>
+                    {activeSectionIndex > 0 ? <button className="nav-button" onClick={() => activeSection && addSectionSplit(activeSection.id)}>Insert section</button> : null}
                   </div>
                 </div>
                 <div className="selected-actions">

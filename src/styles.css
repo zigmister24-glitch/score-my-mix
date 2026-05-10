@@ -1159,3 +1159,20 @@ button, input { font: inherit; }
   }
 }
 
+
+
+.waveform-genre-select {
+  min-width: 220px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
+  font-weight: 800;
+  padding: 10px 14px;
+  outline: none;
+}
+
+.waveform-genre-select:focus {
+  border-color: rgba(129, 140, 248, 0.9);
+  box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.25);
+}

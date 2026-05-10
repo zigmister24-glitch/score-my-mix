@@ -18,6 +18,9 @@ interface WaveformPanelProps {
   onSaveMap?: () => void
   onResetMap?: () => void
   sectionMapStatus?: string
+  selectedGenre?: string
+  genreOptions?: string[]
+  onGenreChange?: (genre: string) => void
 }
 
 export interface WaveformHandle {
@@ -223,6 +226,20 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
         </div>
         <div className="audio-controls">
           {sectionMapStatus ? <span className="section-map-status">{sectionMapStatus}</span> : null}
+          {selectedGenre && onGenreChange && genreOptions.length ? (
+            <select
+              className="waveform-genre-select"
+              value={selectedGenre}
+              onChange={(event) => onGenreChange(event.target.value)}
+              title="Genre profile"
+            >
+              {genreOptions.map((genre) => (
+                <option key={genre} value={genre}>
+                  {`Genre - ${genre}`}
+                </option>
+              ))}
+            </select>
+          ) : null}
           {onResetMap ? <button className="nav-button compact-reset-button" onClick={onResetMap}>Reset to auto</button> : null}
           <button className="primary-button" onClick={togglePlayback} disabled={!fileUrl}>
             {isPlaying ? 'Pause track' : 'Play track'}
