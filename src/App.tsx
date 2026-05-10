@@ -710,12 +710,12 @@ export default function App() {
       autoSectionsRef.current = autoSections
       const identity = await inferTrackIdentity(file)
       const durationSeconds = Math.round(buffer.duration || 0)
-      if (durationSeconds < 60 || durationSeconds > 900) {
+      if (durationSeconds < 5 || durationSeconds > 900) {
         if (fileUrl) URL.revokeObjectURL(fileUrl)
         URL.revokeObjectURL(nextUrl)
         setFileUrl(null)
         setFileName('')
-        setError('Uploads need to be between 1 and 15 minutes long.')
+        setError('Uploads need to be between 5 seconds and 15 minutes long.')
         setIsLoading(false)
         return
       }
@@ -760,38 +760,45 @@ export default function App() {
         normalizedTitle,
       }
 
-      const leaderboardResult = await submitLeaderboardEntry(currentEntry)
+      if (durationSeconds >= 150) {
+        const leaderboardResult = await submitLeaderboardEntry(currentEntry)
 
-      if (leaderboardResult) {
-        const nextAllTime = Array.isArray(leaderboardResult.allTime)
-          ? leaderboardResult.allTime.map(mapApiEntry)
-          : []
-        const nextHotStreak = Array.isArray(leaderboardResult.hotStreak)
-          ? leaderboardResult.hotStreak.map(mapApiEntry)
-          : []
+        if (leaderboardResult) {
+          const nextAllTime = Array.isArray(leaderboardResult.allTime)
+            ? leaderboardResult.allTime.map(mapApiEntry)
+            : []
+          const nextHotStreak = Array.isArray(leaderboardResult.hotStreak)
+            ? leaderboardResult.hotStreak.map(mapApiEntry)
+            : []
 
-        setLeaderboard(nextAllTime)
-        setLeaderboardLast30(nextHotStreak)
+          setLeaderboard(nextAllTime)
+          setLeaderboardLast30(nextHotStreak)
 
-        const messages: string[] = []
-        if (leaderboardResult.madeAllTime) {
-          if (leaderboardResult.allTimeRank === 1) messages.push('Top of the Legends 🏆')
-          else if (leaderboardResult.status === 'improved') messages.push('Nice. You improved your Mixing Legends score')
-          else if (leaderboardResult.status === 'retained') messages.push('Still in the Top 6 Mixing Legends')
-          else messages.push('Congrats. You made the Top 6 Mixing Legends')
+          const messages: string[] = []
+          if (leaderboardResult.madeAllTime) {
+            if (leaderboardResult.allTimeRank === 1) messages.push('Top of the Legends 🏆')
+            else if (leaderboardResult.status === 'improved') messages.push('Nice. You improved your Mixing Legends score')
+            else if (leaderboardResult.status === 'retained') messages.push('Still in the Top 6 Mixing Legends')
+            else messages.push('Congrats. You made the Top 6 Mixing Legends')
+          }
+          if (leaderboardResult.madeHotStreak) {
+            if (leaderboardResult.hotStreakRank === 1) messages.push('Hot Streak Leader 🔥')
+            else if (leaderboardResult.status === 'improved') messages.push('Nice. You improved your 30 Day Hot Streak score')
+            else if (leaderboardResult.status === 'retained') messages.push('Still in the Top 6 30 Day Hot Streak')
+            else messages.push('Congrats. You hit the Top 6 30 Day Hot Streak')
+          }
+          setLeaderboardMessage(messages.join(' • '))
+        } else {
+          const boards = await readLeaderboard()
+          setLeaderboard(boards.allTime)
+          setLeaderboardLast30(boards.hotStreak)
+          setLeaderboardMessage('Global leaderboard unavailable right now. Your mix still scored locally on this page.')
         }
-        if (leaderboardResult.madeHotStreak) {
-          if (leaderboardResult.hotStreakRank === 1) messages.push('Hot Streak Leader 🔥')
-          else if (leaderboardResult.status === 'improved') messages.push('Nice. You improved your 30 Day Hot Streak score')
-          else if (leaderboardResult.status === 'retained') messages.push('Still in the Top 6 30 Day Hot Streak')
-          else messages.push('Congrats. You hit the Top 6 30 Day Hot Streak')
-        }
-        setLeaderboardMessage(messages.join(' • '))
       } else {
         const boards = await readLeaderboard()
         setLeaderboard(boards.allTime)
         setLeaderboardLast30(boards.hotStreak)
-        setLeaderboardMessage('Global leaderboard unavailable right now. Your mix still scored locally on this page.')
+        setLeaderboardMessage('Short test clips under 2:30 score locally but are not saved to the leaderboards.')
       }
       setSections(nextSections)
       setActiveSectionId(nextSections[0]?.id ?? null)
@@ -1035,7 +1042,12 @@ export default function App() {
 
     if (activeSectionIndex > 0) boundaries[activeSectionIndex] = safeStart
     if (activeSectionIndex < sections.length - 1) boundaries[activeSectionIndex + 1] = safeEnd
-    rebuildSectionsFromBoundaries(boundaries, activeSection.id, true, true)
+
+    // v0.94: timing edits now update locally and show a Save button instead
+    // of auto-saving immediately.
+    rebuildSectionsFromBoundaries(boundaries, activeSection.id, true, false)
+    setSectionMapDirty(true)
+    setSectionMapStatus('Unsaved section timing')
   }
 
   const nudgeSelectedSectionTiming = (edge: 'start' | 'end', amount: number) => {
@@ -1159,7 +1171,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.93</span>
+              <span className="version-pill">v0.94</span>
             </div>
           </div>
 
@@ -1360,8 +1372,7 @@ export default function App() {
                       <input
                         value={sectionStartInput}
                         onChange={(event) => setSectionStartInput(event.target.value)}
-                        onBlur={applySelectedSectionTiming}
-                        onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
+                        onKeyDown={(event) => { if (event.key === 'Enter') applySelectedSectionTiming() }}
                       />
                     </label>
                     <span className="section-time-arrow">→</span>
@@ -1370,12 +1381,13 @@ export default function App() {
                       <input
                         value={sectionEndInput}
                         onChange={(event) => setSectionEndInput(event.target.value)}
-                        onBlur={applySelectedSectionTiming}
-                        onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
+                        onKeyDown={(event) => { if (event.key === 'Enter') applySelectedSectionTiming() }}
                       />
                     </label>
                   </div>
                   <div className="section-editor-actions stacked-section-actions">
+                    <button className="nav-button" onClick={applySelectedSectionTiming} disabled={!activeSection}>Apply timing</button>
+                    <button className="nav-button" onClick={saveCurrentSectionMap} disabled={!sectionMapDirty}>Save sections</button>
                     <button className="nav-button" onClick={() => activeSection && deleteSection(activeSection.id)} disabled={sections.length <= 1}>Delete section</button>
                     {activeSectionIndex > 0 ? <button className="nav-button" onClick={() => activeSection && addSectionSplit(activeSection.id)}>Insert section</button> : null}
                   </div>
