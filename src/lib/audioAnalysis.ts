@@ -1011,8 +1011,10 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     // If vocals look too loud, compare them against the last STRONG vocal anchor,
     // not simply the previous section. This avoids instrumental or sparse bridges
     // poisoning the next chorus or emotional vocal section.
-    let lastStrongVocalAnchorRatio: number | null = null
-    let lastStrongVocalAnchorRms: number | null = null
+    let bestVocalAnchorRatio: number | null = null
+    let bestVocalAnchorBand: number | null = null
+    let bestVocalAnchorFullRms: number | null = null
+    let bestAnchorScore = 0
 
     for (let anchorIndex = i - 1; anchorIndex >= 0; anchorIndex -= 1) {
       const anchorStart = Math.floor(boundaries[anchorIndex] * sampleRate)
@@ -1021,62 +1023,68 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       const anchorFullRms = rms(channel, anchorStart, anchorEnd)
       const anchorVocalBand = bandpassRms(channel, sampleRate, anchorStart, anchorEnd, 2400, 0.85)
       const anchorVocalRatio = anchorVocalBand / Math.max(0.0001, anchorFullRms)
-
-      // v0.110: Full-mix vocal anchor detection.
-      // Sparse/quiet sections can have a high vocal ratio, but they should not
-      // become the anchor for the next chorus. A valid anchor now needs strong
-      // vocal presence AND a reasonably full backing mix.
       const anchorDurationWeight = Math.min(anchorEnd - anchorStart, sampleRate * 24) / (sampleRate * 24)
-      const anchorEnergyVsCurrent = anchorFullRms / Math.max(0.0001, fullRms)
       const anchorEnergyVsSong = anchorFullRms / Math.max(0.0001, globalEnergy)
 
-      const anchorStrength =
-        (anchorVocalRatio * 100)
-        + (anchorEnergyVsSong * 18)
-        + (anchorDurationWeight * 10)
+      // v0.112: pick the best previous full-vocal anchor, not just the nearest.
+      // This lets the model skip instrumental/sparse bridges and find the last
+      // real chorus/verse-style anchor.
+      const isCandidate =
+        anchorFullRms > 0.0045
+        && anchorVocalRatio >= 0.10
+        && anchorEnergyVsSong >= 0.72
 
-      const isStrongAnchor =
-        anchorFullRms > 0.006
-        && anchorVocalRatio >= 0.13
-        && anchorEnergyVsSong >= 0.85
-        && anchorEnergyVsCurrent >= 0.72
-        && anchorStrength >= 26
+      const anchorScore =
+        (anchorEnergyVsSong * 45)
+        + (anchorDurationWeight * 18)
+        + (anchorVocalRatio * 35)
 
-      if (isStrongAnchor) {
-        lastStrongVocalAnchorRatio = anchorVocalRatio
-        lastStrongVocalAnchorRms = anchorVocalBand
-        break
+      if (isCandidate && anchorScore > bestAnchorScore) {
+        bestAnchorScore = anchorScore
+        bestVocalAnchorRatio = anchorVocalRatio
+        bestVocalAnchorBand = anchorVocalBand
+        bestVocalAnchorFullRms = anchorFullRms
       }
     }
 
     const currentVocalDeviation = ((vocalRatio - vocalTarget) / Math.max(0.0001, vocalTarget)) * 100
     const currentVocalLooksTooLoud = currentVocalDeviation > 8
 
-    const anchorRatioDeviation = lastStrongVocalAnchorRatio == null
+    const mixDroppedFromAnchor = bestVocalAnchorFullRms == null
+      ? 0
+      : clamp((bestVocalAnchorFullRms - fullRms) / Math.max(0.0001, bestVocalAnchorFullRms), 0, 1)
+
+    const vocalAbsoluteDelta = bestVocalAnchorBand == null
       ? null
-      : ((vocalRatio - lastStrongVocalAnchorRatio) / Math.max(0.0001, lastStrongVocalAnchorRatio)) * 100
+      : ((vocalBand - bestVocalAnchorBand) / Math.max(0.0001, bestVocalAnchorBand)) * 100
 
-    const currentVocalAbsoluteDelta = lastStrongVocalAnchorRms == null
+    const anchorRatioDelta = bestVocalAnchorRatio == null
       ? null
-      : ((vocalBand - lastStrongVocalAnchorRms) / Math.max(0.0001, lastStrongVocalAnchorRms)) * 100
+      : ((vocalRatio - bestVocalAnchorRatio) / Math.max(0.0001, bestVocalAnchorRatio)) * 100
 
-    const closeToStrongAnchor =
-      anchorRatioDeviation != null
-      && Math.abs(anchorRatioDeviation) <= 20
-      && currentVocalAbsoluteDelta != null
-      && Math.abs(currentVocalAbsoluteDelta) <= 18
+    const vocalCloseInAbsoluteLevel =
+      vocalAbsoluteDelta != null
+      && Math.abs(vocalAbsoluteDelta) <= 35
 
-    // v0.111: stronger rescue when the vocal is close to a strong anchor.
-    // If the singer did not meaningfully get louder and the arrangement simply
-    // stepped back, suppress the "too loud" penalty much more aggressively.
-    const rescueAmount =
-      currentVocalLooksTooLoud && closeToStrongAnchor
-        ? clamp((currentVocalDeviation - 6) / 12, 0, 0.94)
-        : 0
+    const vocalNotWildlyDifferentFromAnchor =
+      anchorRatioDelta != null
+      && Math.abs(anchorRatioDelta) <= 45
 
-    const rescuedVocalRatio = lastStrongVocalAnchorRatio == null
+    const shouldRescue =
+      currentVocalLooksTooLoud
+      && mixDroppedFromAnchor >= 0.12
+      && vocalCloseInAbsoluteLevel
+      && vocalNotWildlyDifferentFromAnchor
+
+    // If the backing mix steps down but the vocal absolute level is close to a
+    // strong prior section, pull the judged ratio back toward the anchor.
+    const rescueAmount = shouldRescue
+      ? clamp(0.55 + mixDroppedFromAnchor * 0.65, 0, 0.96)
+      : 0
+
+    const rescuedVocalRatio = bestVocalAnchorRatio == null
       ? vocalRatio
-      : (vocalRatio * (1 - rescueAmount)) + (lastStrongVocalAnchorRatio * rescueAmount)
+      : (vocalRatio * (1 - rescueAmount)) + (bestVocalAnchorRatio * rescueAmount)
 
     const drumsVsEverything = scoreAroundTarget(drumLevelRatio, drumLevelTarget, 150, 40, 94)
     const vocalLevel = scoreAroundTarget(rescuedVocalRatio, vocalTarget, 150, 40, 100)
