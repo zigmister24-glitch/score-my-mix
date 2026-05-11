@@ -13,13 +13,13 @@ const IS_LOCAL_DEV = window.location.hostname === 'localhost' || window.location
 
 const ACCEPTED_TYPES = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac']
 const GENRE_PROFILES = {
-  'Modern Pop': { tonal: { weight: 0, body: 0, core: 0, air: 0 }, vocals: 0 },
-  'EDM / Dance': { tonal: { weight: 8, body: -2, core: -2, air: 4 }, vocals: -1 },
-  'Rock': { tonal: { weight: 2, body: 5, core: 4, air: -2 }, vocals: 0 },
-  'Metal / Nu Metal': { tonal: { weight: 5, body: 3, core: 5, air: 1 }, vocals: 1 },
-  'Hip Hop / Rap': { tonal: { weight: 10, body: 2, core: -3, air: 2 }, vocals: 1 },
-  'Singer Songwriter': { tonal: { weight: -3, body: 2, core: 5, air: 2 }, vocals: 2 },
-  'Cinematic / Trailer': { tonal: { weight: 8, body: 6, core: -2, air: 1 }, vocals: 0 },
+  'Modern Pop': { tonal: { weight: 0, body: 0, core: 0, air: 0 }, tonalWeights: { weight: 0.22, body: 0.22, core: 0.31, air: 0.25 }, vocals: 0 },
+  'EDM / Dance': { tonal: { weight: 8, body: -2, core: -2, air: 4 }, tonalWeights: { weight: 0.34, body: 0.16, core: 0.20, air: 0.30 }, vocals: -1 },
+  'Rock': { tonal: { weight: 2, body: 5, core: 4, air: -2 }, tonalWeights: { weight: 0.26, body: 0.31, core: 0.30, air: 0.13 }, vocals: 0 },
+  'Metal / Nu Metal': { tonal: { weight: 5, body: 3, core: 5, air: 1 }, tonalWeights: { weight: 0.30, body: 0.24, core: 0.32, air: 0.14 }, vocals: 1 },
+  'Hip Hop / Rap': { tonal: { weight: 10, body: 2, core: -3, air: 2 }, tonalWeights: { weight: 0.42, body: 0.20, core: 0.23, air: 0.15 }, vocals: 1 },
+  'Singer Songwriter': { tonal: { weight: -3, body: 2, core: 5, air: 2 }, tonalWeights: { weight: 0.16, body: 0.28, core: 0.40, air: 0.16 }, vocals: 2 },
+  'Cinematic / Trailer': { tonal: { weight: 8, body: 6, core: -2, air: 1 }, tonalWeights: { weight: 0.38, body: 0.34, core: 0.16, air: 0.12 }, vocals: 0 },
   'Scarlett Lullaby': { tonal: { weight: 16, body: 4, core: 2, air: 2 }, vocals: 2 },
 } as const satisfies Record<string, AnalysisGenreProfile>
 
@@ -1322,7 +1322,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.113</span>
+              <span className="version-pill">v0.114</span>
             </div>
           </div>
 

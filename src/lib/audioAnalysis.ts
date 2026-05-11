@@ -7,6 +7,12 @@ export type AnalysisGenreProfile = {
     core?: number
     air?: number
   }
+  tonalWeights?: {
+    weight?: number
+    body?: number
+    core?: number
+    air?: number
+  }
   vocals?: number
   width?: {
     middle?: number
@@ -28,6 +34,24 @@ function normalizeTargets<T extends Record<string, number>>(targets: T): T {
   return Object.fromEntries(
     Object.entries(targets).map(([key, value]) => [key, value / total]),
   ) as T
+}
+
+function getTonalWeights(genreProfile?: AnalysisGenreProfile) {
+  const raw = {
+    weight: genreProfile?.tonalWeights?.weight ?? 0.25,
+    body: genreProfile?.tonalWeights?.body ?? 0.25,
+    core: genreProfile?.tonalWeights?.core ?? 0.25,
+    air: genreProfile?.tonalWeights?.air ?? 0.25,
+  }
+
+  return normalizeTargets(raw)
+}
+
+function weightedTonalDeviation(
+  values: Array<{ key: 'weight' | 'body' | 'core' | 'air'; value: number }>,
+  weights: Record<'weight' | 'body' | 'core' | 'air', number>,
+) {
+  return values.reduce((sum, item) => sum + item.value * weights[item.key], 0)
 }
 
 function averageAbs(samples: Float32Array, start: number, end: number) {
@@ -911,23 +935,34 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const widthMotion = Math.abs(widthSecondHalf - widthFirstHalf) / Math.max(0.04, Math.max(widthFirstHalf, widthSecondHalf))
     const sectionDuration = end - start
     const tonalBalanceBands = buildTonalBalanceBands(channel, sampleRate, startIndex, endIndex, genreProfile)
-    const tonalDeviations = tonalBalanceBands.map((band) => Math.abs(band.deviationPercent))
-    const tonalWorstDeviation = Math.max(...tonalDeviations)
-    const tonalWatchCount = tonalDeviations.filter((deviation) => deviation > 10).length
-    const tonalFixCount = tonalDeviations.filter((deviation) => deviation > 20).length
+    const tonalWeights = getTonalWeights(genreProfile)
+    const tonalDeviations = tonalBalanceBands.map((band) => ({
+      key: band.key,
+      value: Math.abs(band.deviationPercent),
+    }))
+    const tonalWorstDeviation = Math.max(...tonalDeviations.map((band) => band.value))
+    const tonalWeightedDeviation = weightedTonalDeviation(tonalDeviations, tonalWeights)
+    const tonalWatchCount = tonalDeviations.filter((band) => band.value > 10).length
+    const tonalFixCount = tonalDeviations.filter((band) => band.value > 20).length
 
     const previousStart = i > 0 ? Math.floor(boundaries[i - 1] * sampleRate) : startIndex
     const previousEnd = i > 0 ? Math.floor(boundaries[i] * sampleRate) : startIndex
     const previousEnergy = i > 0 ? averageAbs(channel, previousStart, previousEnd) : globalEnergy
     const sectionLift = clamp((energy - previousEnergy) / Math.max(0.0001, previousEnergy), -0.5, 0.8)
-    const tonalBaseScore = tonalWorstDeviation <= 10
-      ? 95
-      : tonalWorstDeviation <= 20
-        ? 90
-        : tonalWorstDeviation <= 30
-          ? 84
-          : 84 - ((tonalWorstDeviation - 30) * 1.1)
-    const tonalBalance = clamp(Math.round(tonalBaseScore - Math.max(0, tonalWatchCount - 1) * 2 - tonalFixCount * 2), 62, 96)
+    // v0.114: genre-aware tonal band weighting.
+    // The main tonal score now follows weighted emotional importance per genre.
+    // Worst-band deviation remains as a small safety penalty so a broken band
+    // cannot hide completely.
+    const tonalBaseScore = tonalWeightedDeviation <= 10
+      ? 96
+      : tonalWeightedDeviation <= 20
+        ? 92
+        : tonalWeightedDeviation <= 30
+          ? 86
+          : 86 - ((tonalWeightedDeviation - 30) * 0.8)
+    const tonalWorstPenalty = Math.max(0, tonalWorstDeviation - 18) * 0.22
+    const tonalStackPenalty = Math.max(0, tonalWatchCount - 1) * 0.5 + tonalFixCount * 0.8
+    const tonalBalance = clamp(Math.round(tonalBaseScore - tonalWorstPenalty - tonalStackPenalty), 62, 100)
     const widthBands = buildWidthBands(stereoWidth, previousStereoWidth, widthMotion, genreProfile)
     const width = scoreWidthFromBands(widthBands)
     const lowPunch = bandpassRms(channel, sampleRate, startIndex, endIndex, 75, 0.9)
