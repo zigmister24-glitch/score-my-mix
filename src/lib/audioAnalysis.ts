@@ -671,21 +671,32 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
   const sideDeviation = side?.deviationPercent ?? 0
   const movementDeviation = movement?.deviationPercent ?? 0
 
-  // v0.115:
-  // Split width quality from width motion. The base score mostly judges the
-  // current section's stereo image. Movement then adds a smaller emotional
-  // storytelling bonus, so a narrow verse can make the chorus bloom without
-  // destabilising the chorus score.
+  // v0.116:
+  // Controlled narrowing can be excellent. A narrower verse should not be
+  // punished heavily if the centre is stable and the stereo image is breathing.
+  // Weak/static narrowness still gets penalised.
   const centrePenalty = Math.max(0, Math.abs(middleDeviation) - 18) * 0.20
-  const narrowPenalty = sideDeviation < -14 ? (Math.abs(sideDeviation) - 14) * 0.42 : 0
+
+  const centreStable = Math.abs(middleDeviation) <= 20
+  const movementBreathing = movementDeviation >= -10 && movementDeviation <= 18
+  const movementLively = movementDeviation > 4 && movementDeviation <= 28
+  const intentionalNarrowing = sideDeviation < -14 && centreStable && (movementBreathing || movementLively)
+
+  const rawNarrowPenalty = sideDeviation < -14 ? (Math.abs(sideDeviation) - 14) * 0.42 : 0
+  const narrowPenalty = intentionalNarrowing ? rawNarrowPenalty * 0.35 : rawNarrowPenalty
+
   const tooWidePenalty = sideDeviation > 56 && Math.abs(middleDeviation) > 24 ? (sideDeviation - 56) * 0.14 : 0
 
   const tastefulWideBonus = sideDeviation > 6 && Math.abs(middleDeviation) <= 26
     ? Math.min(6, (sideDeviation - 6) * 0.12)
     : 0
 
+  const intentionalFocusBonus = intentionalNarrowing
+    ? Math.min(4, Math.abs(sideDeviation + 14) * 0.12 + (centreStable ? 1.5 : 0))
+    : 0
+
   const baseWidthQuality = clamp(
-    90 - centrePenalty - narrowPenalty - tooWidePenalty + tastefulWideBonus,
+    90 - centrePenalty - narrowPenalty - tooWidePenalty + tastefulWideBonus + intentionalFocusBonus,
     62,
     98,
   )
@@ -698,11 +709,15 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
     ? 1.5
     : 0
 
+  const intentionalContrastBonus = intentionalNarrowing
+    ? 2.5
+    : 0
+
   const staticPenalty = movementDeviation < -26
     ? Math.min(3, (Math.abs(movementDeviation) - 26) * 0.10)
     : 0
 
-  const widthMovementQuality = clamp(90 + expansionBonus + breathingBonus - staticPenalty, 70, 100)
+  const widthMovementQuality = clamp(90 + expansionBonus + breathingBonus + intentionalContrastBonus - staticPenalty, 70, 100)
 
   return clamp(
     Math.round((baseWidthQuality * 0.78) + (widthMovementQuality * 0.22)),
