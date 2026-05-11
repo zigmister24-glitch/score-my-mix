@@ -108,7 +108,24 @@ function transientFlux(samples: Float32Array, sampleRate: number, start: number,
 }
 
 function scoreAroundTarget(value: number, target: number, sensitivity: number, min = 42, max = 94) {
-  return clamp(Math.round(100 - Math.min(100, Math.abs(value - target) * sensitivity)), min, max)
+  const deviation = Math.abs(value - target)
+
+  // v0.113:
+  // Softer elite-region curve. Tiny deviations near the target should still
+  // score extremely highly rather than falling away too aggressively.
+  let score = 100
+
+  if (deviation <= 1) {
+    score = 96 + ((1 - deviation) * 4)
+  } else if (deviation <= 2) {
+    score = 94 + ((2 - deviation) * 2)
+  } else if (deviation <= 5) {
+    score = 88 + ((5 - deviation) * 2)
+  } else {
+    score = 100 - Math.min(100, deviation * sensitivity)
+  }
+
+  return clamp(Math.round(score), min, max)
 }
 
 function estimateStereoWidth(buffer: AudioBuffer, startIndex: number, endIndex: number) {
