@@ -670,17 +670,45 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
   const middleDeviation = middle?.deviationPercent ?? 0
   const sideDeviation = side?.deviationPercent ?? 0
   const movementDeviation = movement?.deviationPercent ?? 0
-  const centrePenalty = Math.max(0, Math.abs(middleDeviation) - 16) * 0.24
-  const narrowPenalty = sideDeviation < -12 ? (Math.abs(sideDeviation) - 12) * 0.55 : 0
-  const tastefulWideBonus = sideDeviation > 8 && Math.abs(middleDeviation) <= 24
-    ? Math.min(5, (sideDeviation - 8) * 0.13)
+
+  // v0.115:
+  // Split width quality from width motion. The base score mostly judges the
+  // current section's stereo image. Movement then adds a smaller emotional
+  // storytelling bonus, so a narrow verse can make the chorus bloom without
+  // destabilising the chorus score.
+  const centrePenalty = Math.max(0, Math.abs(middleDeviation) - 18) * 0.20
+  const narrowPenalty = sideDeviation < -14 ? (Math.abs(sideDeviation) - 14) * 0.42 : 0
+  const tooWidePenalty = sideDeviation > 56 && Math.abs(middleDeviation) > 24 ? (sideDeviation - 56) * 0.14 : 0
+
+  const tastefulWideBonus = sideDeviation > 6 && Math.abs(middleDeviation) <= 26
+    ? Math.min(6, (sideDeviation - 6) * 0.12)
     : 0
-  const movementBonus = movementDeviation > 4 && Math.abs(middleDeviation) <= 26
-    ? Math.min(10, (movementDeviation - 4) * 0.34)
+
+  const baseWidthQuality = clamp(
+    90 - centrePenalty - narrowPenalty - tooWidePenalty + tastefulWideBonus,
+    62,
+    98,
+  )
+
+  const expansionBonus = movementDeviation > 4 && Math.abs(middleDeviation) <= 28
+    ? Math.min(6, (movementDeviation - 4) * 0.20)
     : 0
-  const staticPenalty = movementDeviation < -20 ? Math.min(4, (Math.abs(movementDeviation) - 20) * 0.18) : 0
-  const tooWidePenalty = sideDeviation > 52 && Math.abs(middleDeviation) > 22 ? (sideDeviation - 52) * 0.18 : 0
-  return clamp(Math.round(90 - centrePenalty - narrowPenalty - staticPenalty - tooWidePenalty + tastefulWideBonus + movementBonus), 62, 100)
+
+  const breathingBonus = movementDeviation >= -8 && movementDeviation <= 14
+    ? 1.5
+    : 0
+
+  const staticPenalty = movementDeviation < -26
+    ? Math.min(3, (Math.abs(movementDeviation) - 26) * 0.10)
+    : 0
+
+  const widthMovementQuality = clamp(90 + expansionBonus + breathingBonus - staticPenalty, 70, 100)
+
+  return clamp(
+    Math.round((baseWidthQuality * 0.78) + (widthMovementQuality * 0.22)),
+    62,
+    100,
+  )
 }
 
 function buildClarityBands(
