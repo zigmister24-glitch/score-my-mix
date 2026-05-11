@@ -1062,13 +1062,16 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
 
     const closeToStrongAnchor =
       anchorRatioDeviation != null
-      && Math.abs(anchorRatioDeviation) <= 14
+      && Math.abs(anchorRatioDeviation) <= 20
       && currentVocalAbsoluteDelta != null
-      && Math.abs(currentVocalAbsoluteDelta) <= 12
+      && Math.abs(currentVocalAbsoluteDelta) <= 18
 
+    // v0.111: stronger rescue when the vocal is close to a strong anchor.
+    // If the singer did not meaningfully get louder and the arrangement simply
+    // stepped back, suppress the "too loud" penalty much more aggressively.
     const rescueAmount =
       currentVocalLooksTooLoud && closeToStrongAnchor
-        ? clamp((currentVocalDeviation - 8) / 16, 0, 0.82)
+        ? clamp((currentVocalDeviation - 6) / 12, 0, 0.94)
         : 0
 
     const rescuedVocalRatio = lastStrongVocalAnchorRatio == null
