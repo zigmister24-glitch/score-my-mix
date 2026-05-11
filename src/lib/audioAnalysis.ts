@@ -1006,39 +1006,68 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const vocalRatio = vocalBand / Math.max(0.0001, fullRms)
     const vocalTarget = clamp(VOCAL_LEVEL_TARGET_ROCK + ((genreProfile?.vocals ?? 0) * 0.01), 0.28, 0.48)
 
-    // v0.108: Vocal Anchor Rescue.
-    // Score vocals against the current section first. Only if the current
-    // section thinks the vocal is too loud do we check whether it is actually
-    // close to the last meaningful vocal section. This prevents quiet sections
-    // from poisoning the next chorus while still protecting intentional sparse
-    // sections from being unfairly punished.
-    let lastGoodVocalAnchorRatio: number | null = null
+    // v0.109: Strong Vocal Anchor Rescue.
+    // Use the current section as the primary judge.
+    // If vocals look too loud, compare them against the last STRONG vocal anchor,
+    // not simply the previous section. This avoids instrumental or sparse bridges
+    // poisoning the next chorus or emotional vocal section.
+    let lastStrongVocalAnchorRatio: number | null = null
+    let lastStrongVocalAnchorRms: number | null = null
+
     for (let anchorIndex = i - 1; anchorIndex >= 0; anchorIndex -= 1) {
       const anchorStart = Math.floor(boundaries[anchorIndex] * sampleRate)
       const anchorEnd = Math.floor(boundaries[anchorIndex + 1] * sampleRate)
+
       const anchorFullRms = rms(channel, anchorStart, anchorEnd)
       const anchorVocalBand = bandpassRms(channel, sampleRate, anchorStart, anchorEnd, 2400, 0.85)
       const anchorVocalRatio = anchorVocalBand / Math.max(0.0001, anchorFullRms)
 
-      const hasMeaningfulVocal = anchorFullRms > 0.002 && anchorVocalRatio >= 0.12
-      if (hasMeaningfulVocal) {
-        lastGoodVocalAnchorRatio = anchorVocalRatio
+      // Strong anchor detection:
+      // - meaningful vocal presence
+      // - enough overall mix energy
+      // - stable/non-sparse vocal section
+      const anchorStrength =
+        (anchorVocalRatio * 100)
+        + (anchorFullRms * 1200)
+        + (Math.min(anchorEnd - anchorStart, sampleRate * 24) / (sampleRate * 24)) * 12
+
+      const isStrongAnchor =
+        anchorFullRms > 0.004
+        && anchorVocalRatio >= 0.13
+        && anchorStrength >= 18
+
+      if (isStrongAnchor) {
+        lastStrongVocalAnchorRatio = anchorVocalRatio
+        lastStrongVocalAnchorRms = anchorVocalBand
         break
       }
     }
 
     const currentVocalDeviation = ((vocalRatio - vocalTarget) / Math.max(0.0001, vocalTarget)) * 100
     const currentVocalLooksTooLoud = currentVocalDeviation > 8
-    const anchorDeviation = lastGoodVocalAnchorRatio == null
+
+    const anchorRatioDeviation = lastStrongVocalAnchorRatio == null
       ? null
-      : ((vocalRatio - lastGoodVocalAnchorRatio) / Math.max(0.0001, lastGoodVocalAnchorRatio)) * 100
-    const closeToAnchor = anchorDeviation != null && Math.abs(anchorDeviation) <= 12
-    const rescueAmount = currentVocalLooksTooLoud && closeToAnchor
-      ? clamp((currentVocalDeviation - 8) / 18, 0, 0.75)
-      : 0
-    const rescuedVocalRatio = lastGoodVocalAnchorRatio == null
+      : ((vocalRatio - lastStrongVocalAnchorRatio) / Math.max(0.0001, lastStrongVocalAnchorRatio)) * 100
+
+    const currentVocalAbsoluteDelta = lastStrongVocalAnchorRms == null
+      ? null
+      : ((vocalBand - lastStrongVocalAnchorRms) / Math.max(0.0001, lastStrongVocalAnchorRms)) * 100
+
+    const closeToStrongAnchor =
+      anchorRatioDeviation != null
+      && Math.abs(anchorRatioDeviation) <= 14
+      && currentVocalAbsoluteDelta != null
+      && Math.abs(currentVocalAbsoluteDelta) <= 12
+
+    const rescueAmount =
+      currentVocalLooksTooLoud && closeToStrongAnchor
+        ? clamp((currentVocalDeviation - 8) / 16, 0, 0.82)
+        : 0
+
+    const rescuedVocalRatio = lastStrongVocalAnchorRatio == null
       ? vocalRatio
-      : (vocalRatio * (1 - rescueAmount)) + (lastGoodVocalAnchorRatio * rescueAmount)
+      : (vocalRatio * (1 - rescueAmount)) + (lastStrongVocalAnchorRatio * rescueAmount)
 
     const drumsVsEverything = scoreAroundTarget(drumLevelRatio, drumLevelTarget, 150, 40, 94)
     const vocalLevel = scoreAroundTarget(rescuedVocalRatio, vocalTarget, 150, 40, 100)
