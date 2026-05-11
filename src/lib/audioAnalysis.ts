@@ -1022,19 +1022,25 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       const anchorVocalBand = bandpassRms(channel, sampleRate, anchorStart, anchorEnd, 2400, 0.85)
       const anchorVocalRatio = anchorVocalBand / Math.max(0.0001, anchorFullRms)
 
-      // Strong anchor detection:
-      // - meaningful vocal presence
-      // - enough overall mix energy
-      // - stable/non-sparse vocal section
+      // v0.110: Full-mix vocal anchor detection.
+      // Sparse/quiet sections can have a high vocal ratio, but they should not
+      // become the anchor for the next chorus. A valid anchor now needs strong
+      // vocal presence AND a reasonably full backing mix.
+      const anchorDurationWeight = Math.min(anchorEnd - anchorStart, sampleRate * 24) / (sampleRate * 24)
+      const anchorEnergyVsCurrent = anchorFullRms / Math.max(0.0001, fullRms)
+      const anchorEnergyVsSong = anchorFullRms / Math.max(0.0001, globalEnergy)
+
       const anchorStrength =
         (anchorVocalRatio * 100)
-        + (anchorFullRms * 1200)
-        + (Math.min(anchorEnd - anchorStart, sampleRate * 24) / (sampleRate * 24)) * 12
+        + (anchorEnergyVsSong * 18)
+        + (anchorDurationWeight * 10)
 
       const isStrongAnchor =
-        anchorFullRms > 0.004
+        anchorFullRms > 0.006
         && anchorVocalRatio >= 0.13
-        && anchorStrength >= 18
+        && anchorEnergyVsSong >= 0.85
+        && anchorEnergyVsCurrent >= 0.72
+        && anchorStrength >= 26
 
       if (isStrongAnchor) {
         lastStrongVocalAnchorRatio = anchorVocalRatio
