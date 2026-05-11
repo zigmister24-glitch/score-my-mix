@@ -1004,15 +1004,50 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const drumLevelRatio = (kickProxy * 0.45) + (snareProxy * 0.35) + (transientProxy * 2.2)
     const drumLevelTarget = 0.42
     const vocalRatio = vocalBand / Math.max(0.0001, fullRms)
-    const drumsVsEverything = scoreAroundTarget(drumLevelRatio, drumLevelTarget, 150, 40, 94)
     const vocalTarget = clamp(VOCAL_LEVEL_TARGET_ROCK + ((genreProfile?.vocals ?? 0) * 0.01), 0.28, 0.48)
-    const vocalLevel = scoreAroundTarget(vocalRatio, vocalTarget, 150, 40, 100)
+
+    // v0.108: Vocal Anchor Rescue.
+    // Score vocals against the current section first. Only if the current
+    // section thinks the vocal is too loud do we check whether it is actually
+    // close to the last meaningful vocal section. This prevents quiet sections
+    // from poisoning the next chorus while still protecting intentional sparse
+    // sections from being unfairly punished.
+    let lastGoodVocalAnchorRatio: number | null = null
+    for (let anchorIndex = i - 1; anchorIndex >= 0; anchorIndex -= 1) {
+      const anchorStart = Math.floor(boundaries[anchorIndex] * sampleRate)
+      const anchorEnd = Math.floor(boundaries[anchorIndex + 1] * sampleRate)
+      const anchorFullRms = rms(channel, anchorStart, anchorEnd)
+      const anchorVocalBand = bandpassRms(channel, sampleRate, anchorStart, anchorEnd, 2400, 0.85)
+      const anchorVocalRatio = anchorVocalBand / Math.max(0.0001, anchorFullRms)
+
+      const hasMeaningfulVocal = anchorFullRms > 0.002 && anchorVocalRatio >= 0.12
+      if (hasMeaningfulVocal) {
+        lastGoodVocalAnchorRatio = anchorVocalRatio
+        break
+      }
+    }
+
+    const currentVocalDeviation = ((vocalRatio - vocalTarget) / Math.max(0.0001, vocalTarget)) * 100
+    const currentVocalLooksTooLoud = currentVocalDeviation > 8
+    const anchorDeviation = lastGoodVocalAnchorRatio == null
+      ? null
+      : ((vocalRatio - lastGoodVocalAnchorRatio) / Math.max(0.0001, lastGoodVocalAnchorRatio)) * 100
+    const closeToAnchor = anchorDeviation != null && Math.abs(anchorDeviation) <= 12
+    const rescueAmount = currentVocalLooksTooLoud && closeToAnchor
+      ? clamp((currentVocalDeviation - 8) / 18, 0, 0.75)
+      : 0
+    const rescuedVocalRatio = lastGoodVocalAnchorRatio == null
+      ? vocalRatio
+      : (vocalRatio * (1 - rescueAmount)) + (lastGoodVocalAnchorRatio * rescueAmount)
+
+    const drumsVsEverything = scoreAroundTarget(drumLevelRatio, drumLevelTarget, 150, 40, 94)
+    const vocalLevel = scoreAroundTarget(rescuedVocalRatio, vocalTarget, 150, 40, 100)
     const levelBalance = {
       drums: makeLevelBalanceItem('drums', 'Drums', drumLevelRatio, drumLevelTarget),
       kick: makeLevelBalanceItem('kick', 'Kick', kickProxy, 0.26),
       snare: makeLevelBalanceItem('snare', 'Snare', snareProxy, 0.22),
       cymbals: makeLevelBalanceItem('cymbals', 'Cymbals', snapEnergy / Math.max(0.0001, snapEnergy + vocalBand + midBody + lowPunch), 0.24),
-      vocals: makeLevelBalanceItem('vocals', 'Vocals', vocalRatio, vocalTarget),
+      vocals: makeLevelBalanceItem('vocals', 'Vocals', rescuedVocalRatio, vocalTarget),
     }
     const metrics = { clarity, impact, tonalBalance, width, drumsVsEverything, vocalLevel }
     // Match the overall section score to the cards currently shown in the UI.
