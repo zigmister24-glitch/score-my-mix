@@ -20,7 +20,7 @@ const GENRE_PROFILES = {
   'Hip Hop / Rap': { tonal: { weight: 10, body: 2, core: -3, air: 2 }, vocals: 1 },
   'Singer Songwriter': { tonal: { weight: -3, body: 2, core: 5, air: 2 }, vocals: 2 },
   'Cinematic / Trailer': { tonal: { weight: 8, body: 6, core: -2, air: 1 }, vocals: 0 },
-  'Scarlett Lullaby': { tonal: { weight: 5, body: 4, core: 1, air: 2 }, vocals: 1 },
+  'Scarlett Lullaby': { tonal: { weight: 16, body: 4, core: 2, air: 2 }, vocals: 2 },
 } as const satisfies Record<string, AnalysisGenreProfile>
 
 type GenreProfileName = keyof typeof GENRE_PROFILES
