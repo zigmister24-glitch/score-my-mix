@@ -716,36 +716,41 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
     ? 3.5
     : 0
 
-  // Stronger stagnation penalty.
-  // Wide-all-the-time should feel emotionally flatter.
+  // v0.119:
+  // Static stereo presentation should now score much lower emotionally.
+  // Width movement is treated as the emotional multiplier for stereo design.
   const staticPenalty =
-    movementDeviation < -14
-      ? Math.min(9, (Math.abs(movementDeviation) - 14) * 0.36)
+    movementDeviation < -8
+      ? Math.min(24, (Math.abs(movementDeviation) - 8) * 0.95)
       : 0
 
+  const movementFlatnessPenalty =
+    movementDeviation >= -6 && movementDeviation <= 2
+      ? 10
+      : movementDeviation > 2 && movementDeviation <= 6
+        ? 5
+        : 0
+
   const widthMovementQuality = clamp(
-    86 + expansionBonus + breathingBonus + intentionalContrastBonus - staticPenalty,
-    62,
+    82 + expansionBonus + breathingBonus + intentionalContrastBonus - staticPenalty - movementFlatnessPenalty,
+    50,
     100,
   )
 
-  // v0.118:
-  // Movement now carries significantly more emotional weight.
-  // Width should reward stereo storytelling and section expansion more strongly.
-  // Big expansion moments can now genuinely reach elite territory.
+  // Big cinematic expansion bonus.
   const eliteMovementBonus =
     movementDeviation > 10 &&
     sideDeviation > 6 &&
     Math.abs(middleDeviation) <= 24
-      ? Math.min(4, (movementDeviation - 10) * 0.28)
+      ? Math.min(8, (movementDeviation - 10) * 0.45)
       : 0
 
   return clamp(
     Math.round(
-      (baseWidthQuality * 0.58) +
-      ((widthMovementQuality + eliteMovementBonus) * 0.42)
+      (baseWidthQuality * 0.45) +
+      ((widthMovementQuality + eliteMovementBonus) * 0.55)
     ),
-    62,
+    50,
     100,
   )
 }
