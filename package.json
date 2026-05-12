@@ -1,7 +1,7 @@
 {
   "name": "mix-analyzer-v4",
   "private": true,
-  "version": "0.124.0",
+  "version": "0.128.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
