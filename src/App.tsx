@@ -11,7 +11,7 @@ declare global {
 
 
 function curveSliderPosition(deviationPercent: number, useAbsolute = false) {
-  // v0.129:
+  // v0.132:
   // Movement uses magnitude: abs(-32..+32), so both widening and narrowing count.
   // 0 movement = far left, 16 = centre, 32 = far right.
   if (useAbsolute) {
@@ -23,6 +23,62 @@ function curveSliderPosition(deviationPercent: number, useAbsolute = false) {
   const scorePosition = 85 + deviationPercent
   const clamped = Math.min(100, Math.max(70, scorePosition))
   return ((clamped - 70) / 30) * 100
+}
+
+
+function getMetricDescription(metric: string) {
+  switch (metric) {
+    case 'clarity':
+      return `Clarity measures how clean and separated the mix feels. Muddy masking, harsh layering, or blurry instrument definition reduce the score.
+
+How it works:
+The engine analyses spectral masking, frequency overlap, transient definition, and mix separation.
+
+To improve this:
+Reduce masking, clean up low-mids, carve EQ space, simplify overlapping layers, and improve transient clarity.`
+    case 'tonalBalance':
+      return `Tonal Balance measures how balanced the frequency spectrum feels for the selected genre.
+
+How it works:
+The engine compares low, low-mid, core, presence, and air energy against genre targets.
+
+To improve this:
+Adjust EQ balance, control harsh highs or muddy lows, and shape the spectrum to better fit the genre.`
+    case 'width':
+      return `Width measures stereo storytelling and spatial contrast. Focused verses, expanding choruses, and stable centre energy improve the score.
+
+How it works:
+The engine analyses stereo spread, side energy, centre stability, and stereo movement between sections.
+
+To improve this:
+Narrow verses before choruses, automate stereo width, use stereo FX returns, and keep kick, bass, snare, and vocals anchored.`
+    case 'vocalLevel':
+      return `Vocal Level measures how well the vocals sit emotionally inside the mix.
+
+How it works:
+The engine compares vocal energy against the surrounding mix and nearby vocal sections.
+
+To improve this:
+Balance vocal level consistency, automate phrases, reduce masking around vocals, and avoid sudden jumps or buried sections.`
+    case 'impact':
+      return `Impact measures energy lift, punch, and emotional momentum.
+
+How it works:
+The engine analyses transients, dynamic contrast, section lift, and arrangement intensity.
+
+To improve this:
+Increase chorus lift, improve drum punch, add transitions, create tension/release, and strengthen dynamic contrast.`
+    case 'curiosity':
+      return `Curiosity measures whether the section has enough variation and movement to keep the listener engaged.
+
+How it works:
+The engine looks for energy movement, tonal changes, transient variation, stereo movement, arrangement evolution, and pacing.
+
+To improve this:
+Add fills, automation, FX throws, transitions, vocal variations, arrangement changes, or new textures to avoid repetitive looping.`
+    default:
+      return ''
+  }
 }
 
 const IS_LOCAL_DEV = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
@@ -475,7 +531,7 @@ function boundariesFromSectionMap(map: SavedSectionMap, durationSeconds: number)
   }
   boundaries.push(durationSeconds)
 
-  // v0.129: Saved maps can contain a final end such as 03:09.99 so the UI feels
+  // v0.132: Saved maps can contain a final end such as 03:09.99 so the UI feels
   // natural, but the audio duration may round to the next second on reload.
   // Snap any boundary very close to the end back to the real duration so we do
   // not create a tiny ghost section at the end of the song.
@@ -1338,7 +1394,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.129</span>
+              <span className="version-pill">v0.132</span>
             </div>
           </div>
 
@@ -1745,6 +1801,10 @@ export default function App() {
                     <p><strong>What {activeMetric === 'clarity' ? 'Density' : (activeMetric === 'impact' && activeSectionUsesCuriosity ? 'Curiosity' : metricLabel(activeMetric))} means:</strong> {activeMetricInsight.meaning}</p>
                     <p><strong>What affects it here:</strong> {activeMetricInsight.influencedBy}</p>
                     <p><strong>Current read:</strong> {activeMetricInsight.currentRead}</p>
+                  </div>
+
+                  <div className="metric-description">
+                    {getMetricDescription(activeMetric === 'impact' && activeSectionUsesCuriosity ? 'curiosity' : activeMetric)}
                   </div>
                 </div>
               )}
