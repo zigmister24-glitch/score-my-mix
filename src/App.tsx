@@ -459,7 +459,7 @@ function boundariesFromSectionMap(map: SavedSectionMap, durationSeconds: number)
   }
   boundaries.push(durationSeconds)
 
-  // v0.93: Saved maps can contain a final end such as 03:09.99 so the UI feels
+  // v0.120: Saved maps can contain a final end such as 03:09.99 so the UI feels
   // natural, but the audio duration may round to the next second on reload.
   // Snap any boundary very close to the end back to the real duration so we do
   // not create a tiny ghost section at the end of the song.
@@ -1322,7 +1322,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.119</span>
+              <span className="version-pill">v0.120</span>
             </div>
           </div>
 
@@ -1606,7 +1606,7 @@ export default function App() {
                                 title={band.action}
                               >
                                 <span className="tonal-band-name">{band.label}<small>{band.range}</small></span>
-                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${50 + ((position - 50) * 0.5)}%` }} /></span>
                                 <span className="tonal-readout">{readout}</span>
                               </button>
                             )
@@ -1630,7 +1630,7 @@ export default function App() {
                                 title={band.action}
                               >
                                 <span className="tonal-band-name">{band.label}<small>{band.range}</small></span>
-                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${50 + ((position - 50) * 0.5)}%` }} /></span>
                                 <span className="tonal-readout">{readout}</span>
                               </button>
                             )
@@ -1654,7 +1654,7 @@ export default function App() {
                             return (
                               <div className={`tonal-band-row tonal-${activeLevelBalance.severity}`}>
                                 <span className="tonal-band-name">{activeLevelBalance.label}<small>{activeLevelBalance.range}</small></span>
-                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${50 + ((position - 50) * 0.5)}%` }} /></span>
                                 <span className="tonal-readout">{readout}</span>
                               </div>
                             )
@@ -1672,7 +1672,7 @@ export default function App() {
                         return (
                           <div className={`tonal-band-row tonal-${item.severity}`} key={item.key}>
                             <span className="tonal-band-name">{item.label}<small>{item.range}</small></span>
-                            <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                            <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${50 + ((position - 50) * 0.5)}%` }} /></span>
                             <span className="tonal-readout">{readout}</span>
                           </div>
                         )
@@ -1689,7 +1689,7 @@ export default function App() {
                             return (
                               <div className={`tonal-band-row tonal-${activeImpactBalance.severity}`}>
                                 <span className="tonal-band-name">{activeImpactBalance.label}<small>{activeImpactBalance.range}</small></span>
-                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${50 + ((position - 50) * 0.5)}%` }} /></span>
                                 <span className="tonal-readout">{readout}</span>
                               </div>
                             )
@@ -1713,7 +1713,7 @@ export default function App() {
                             return (
                               <div className={`tonal-band-row tonal-${item.severity} ${infoOnly ? 'profile-info-row' : 'profile-action-row'}`} key={item.key} title={item.action}>
                                 <span className="tonal-band-name">{item.label}<small>{item.range}</small></span>
-                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${position}%` }} /></span>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${50 + ((position - 50) * 0.5)}%` }} /></span>
                                 <span className="tonal-readout profile-readout">
                                   <span>{readout}</span>
                                   {infoOnly && <small className="info-only-note"><span className="info-icon">i</span> Information only</small>}
