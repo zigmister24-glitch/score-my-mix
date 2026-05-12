@@ -701,26 +701,36 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
     98,
   )
 
-  const expansionBonus = movementDeviation > 4 && Math.abs(middleDeviation) <= 28
-    ? Math.min(6, (movementDeviation - 4) * 0.20)
+  // v0.117:
+  // Width movement now has more emotional influence. Static-wide mixes should
+  // no longer score similarly to mixes with meaningful stereo storytelling.
+  const expansionBonus = movementDeviation > 3 && Math.abs(middleDeviation) <= 28
+    ? Math.min(10, (movementDeviation - 3) * 0.34)
     : 0
 
-  const breathingBonus = movementDeviation >= -8 && movementDeviation <= 14
-    ? 1.5
-    : 0
-
-  const intentionalContrastBonus = intentionalNarrowing
+  const breathingBonus = movementDeviation >= -8 && movementDeviation <= 12
     ? 2.5
     : 0
 
-  const staticPenalty = movementDeviation < -26
-    ? Math.min(3, (Math.abs(movementDeviation) - 26) * 0.10)
+  const intentionalContrastBonus = intentionalNarrowing
+    ? 3.5
     : 0
 
-  const widthMovementQuality = clamp(90 + expansionBonus + breathingBonus + intentionalContrastBonus - staticPenalty, 70, 100)
+  // Stronger stagnation penalty.
+  // Wide-all-the-time should feel emotionally flatter.
+  const staticPenalty =
+    movementDeviation < -14
+      ? Math.min(9, (Math.abs(movementDeviation) - 14) * 0.36)
+      : 0
+
+  const widthMovementQuality = clamp(
+    86 + expansionBonus + breathingBonus + intentionalContrastBonus - staticPenalty,
+    62,
+    100,
+  )
 
   return clamp(
-    Math.round((baseWidthQuality * 0.78) + (widthMovementQuality * 0.22)),
+    Math.round((baseWidthQuality * 0.65) + (widthMovementQuality * 0.35)),
     62,
     100,
   )
