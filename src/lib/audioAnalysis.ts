@@ -670,6 +670,7 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
   const middleDeviation = middle?.deviationPercent ?? 0
   const sideDeviation = side?.deviationPercent ?? 0
   const movementDeviation = movement?.deviationPercent ?? 0
+  const movementAmount = Math.abs(movementDeviation)
 
   // v0.116:
   // Controlled narrowing can be excellent. A narrower verse should not be
@@ -704,11 +705,11 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
   // v0.117:
   // Width movement now has more emotional influence. Static-wide mixes should
   // no longer score similarly to mixes with meaningful stereo storytelling.
-  const expansionBonus = movementDeviation > 3 && Math.abs(middleDeviation) <= 28
-    ? Math.min(10, (movementDeviation - 3) * 0.34)
+  const expansionBonus = movementAmount > 3 && Math.abs(middleDeviation) <= 28
+    ? Math.min(10, (movementAmount - 3) * 0.34)
     : 0
 
-  const breathingBonus = movementDeviation >= -8 && movementDeviation <= 12
+  const breathingBonus = movementAmount > 5 && movementAmount <= 14
     ? 2.5
     : 0
 
@@ -716,33 +717,31 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
     ? 3.5
     : 0
 
-  // v0.119:
-  // Static stereo presentation should now score much lower emotionally.
-  // Width movement is treated as the emotional multiplier for stereo design.
-  const staticPenalty =
-    movementDeviation < -8
-      ? Math.min(24, (Math.abs(movementDeviation) - 8) * 0.95)
-      : 0
-
+  // v0.129:
+  // Movement is now judged by magnitude, not direction.
+  // A dramatic narrowing can be as emotionally useful as a dramatic widening.
   const movementFlatnessPenalty =
-    movementDeviation >= -6 && movementDeviation <= 2
-      ? 10
-      : movementDeviation > 2 && movementDeviation <= 6
-        ? 5
+    movementAmount <= 4
+      ? 18
+      : movementAmount <= 8
+        ? 9
         : 0
 
+  const movementStoryBonus =
+    movementAmount > 8
+      ? Math.min(14, (movementAmount - 8) * 0.42)
+      : 0
+
   const widthMovementQuality = clamp(
-    82 + expansionBonus + breathingBonus + intentionalContrastBonus - staticPenalty - movementFlatnessPenalty,
+    70 + expansionBonus + breathingBonus + intentionalContrastBonus + movementStoryBonus - movementFlatnessPenalty,
     50,
     100,
   )
 
-  // Big cinematic expansion bonus.
   const eliteMovementBonus =
-    movementDeviation > 10 &&
-    sideDeviation > 6 &&
+    movementAmount > 18 &&
     Math.abs(middleDeviation) <= 24
-      ? Math.min(8, (movementDeviation - 10) * 0.45)
+      ? Math.min(8, (movementAmount - 18) * 0.58)
       : 0
 
   return clamp(
