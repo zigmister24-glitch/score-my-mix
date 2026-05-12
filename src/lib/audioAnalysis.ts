@@ -729,8 +729,22 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
     100,
   )
 
+  // v0.118:
+  // Movement now carries significantly more emotional weight.
+  // Width should reward stereo storytelling and section expansion more strongly.
+  // Big expansion moments can now genuinely reach elite territory.
+  const eliteMovementBonus =
+    movementDeviation > 10 &&
+    sideDeviation > 6 &&
+    Math.abs(middleDeviation) <= 24
+      ? Math.min(4, (movementDeviation - 10) * 0.28)
+      : 0
+
   return clamp(
-    Math.round((baseWidthQuality * 0.65) + (widthMovementQuality * 0.35)),
+    Math.round(
+      (baseWidthQuality * 0.58) +
+      ((widthMovementQuality + eliteMovementBonus) * 0.42)
+    ),
     62,
     100,
   )
