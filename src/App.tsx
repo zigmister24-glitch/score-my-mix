@@ -9,6 +9,20 @@ declare global {
   }
 }
 
+
+function curveSliderPosition(normalized: number) {
+  const clamped = Math.min(1, Math.max(0, normalized))
+
+  // v0.124:
+  // Stronger right-side exaggeration so elite cinematic movement visually
+  // reaches the far-right region instead of clustering near the centre.
+  if (clamped >= 0.5) {
+    return Math.min(1, 0.5 + ((clamped - 0.5) * 1.9))
+  }
+
+  return Math.max(0, 0.5 - ((0.5 - clamped) * 1.45))
+}
+
 const IS_LOCAL_DEV = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 
 const ACCEPTED_TYPES = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac']
@@ -459,7 +473,7 @@ function boundariesFromSectionMap(map: SavedSectionMap, durationSeconds: number)
   }
   boundaries.push(durationSeconds)
 
-  // v0.121: Saved maps can contain a final end such as 03:09.99 so the UI feels
+  // v0.124: Saved maps can contain a final end such as 03:09.99 so the UI feels
   // natural, but the audio duration may round to the next second on reload.
   // Snap any boundary very close to the end back to the real duration so we do
   // not create a tiny ghost section at the end of the song.
@@ -1322,7 +1336,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.121</span>
+              <span className="version-pill">v0.124</span>
             </div>
           </div>
 
