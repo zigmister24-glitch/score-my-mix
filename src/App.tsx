@@ -92,7 +92,7 @@ const GENRE_PROFILES = {
   'Hip Hop / Rap': { tonal: { weight: 10, body: 2, core: -3, air: 2 }, tonalWeights: { weight: 0.42, body: 0.20, core: 0.23, air: 0.15 }, vocals: 1 },
   'Singer Songwriter': { tonal: { weight: -3, body: 2, core: 5, air: 2 }, tonalWeights: { weight: 0.16, body: 0.28, core: 0.40, air: 0.16 }, vocals: 2 },
   'Cinematic / Trailer': { tonal: { weight: 8, body: 6, core: -2, air: 1 }, tonalWeights: { weight: 0.38, body: 0.34, core: 0.16, air: 0.12 }, vocals: 0 },
-  'Scarlett Lullaby': { tonal: { weight: 16, body: 4, core: 2, air: 2 }, vocals: 2 },
+  'Scarlett Lullaby': { tonal: { weight: 16, body: 4, core: 2, air: 1 }, vocals: 1 },
 } as const satisfies Record<string, AnalysisGenreProfile>
 
 type GenreProfileName = keyof typeof GENRE_PROFILES
