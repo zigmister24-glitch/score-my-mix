@@ -152,6 +152,21 @@ function scoreAroundTarget(value: number, target: number, sensitivity: number, m
   return clamp(Math.round(score), min, max)
 }
 
+
+function scoreVocalLevelFromRatio(ratio: number, target: number) {
+  const deviationPercent = Math.abs(((ratio - target) / Math.max(0.0001, target)) * 100)
+
+  // v0.133:
+  // Vocal scoring must match the vocal strip. The generic scoreAroundTarget
+  // function works on raw ratio distance, which made obvious "too quiet" or
+  // "too loud" vocal sections still display as 100%.
+  if (deviationPercent <= 3) return 100
+  if (deviationPercent <= 8) return Math.round(100 - ((deviationPercent - 3) * 1.4))
+  if (deviationPercent <= 14) return Math.round(93 - ((deviationPercent - 8) * 2.0))
+
+  return clamp(Math.round(81 - ((deviationPercent - 14) * 2.2)), 45, 100)
+}
+
 function estimateStereoWidth(buffer: AudioBuffer, startIndex: number, endIndex: number) {
   if (buffer.numberOfChannels < 2) return 0.48
   const left = buffer.getChannelData(0)
@@ -1210,7 +1225,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       : (vocalRatio * (1 - rescueAmount)) + (bestVocalAnchorRatio * rescueAmount)
 
     const drumsVsEverything = scoreAroundTarget(drumLevelRatio, drumLevelTarget, 150, 40, 94)
-    const vocalLevel = scoreAroundTarget(rescuedVocalRatio, vocalTarget, 150, 40, 100)
+    const vocalLevel = scoreVocalLevelFromRatio(rescuedVocalRatio, vocalTarget)
     const levelBalance = {
       drums: makeLevelBalanceItem('drums', 'Drums', drumLevelRatio, drumLevelTarget),
       kick: makeLevelBalanceItem('kick', 'Kick', kickProxy, 0.26),

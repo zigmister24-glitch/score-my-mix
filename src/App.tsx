@@ -11,7 +11,7 @@ declare global {
 
 
 function curveSliderPosition(deviationPercent: number, useAbsolute = false) {
-  // v0.132:
+  // v0.133:
   // Movement uses magnitude: abs(-32..+32), so both widening and narrowing count.
   // 0 movement = far left, 16 = centre, 32 = far right.
   if (useAbsolute) {
@@ -531,7 +531,7 @@ function boundariesFromSectionMap(map: SavedSectionMap, durationSeconds: number)
   }
   boundaries.push(durationSeconds)
 
-  // v0.132: Saved maps can contain a final end such as 03:09.99 so the UI feels
+  // v0.133: Saved maps can contain a final end such as 03:09.99 so the UI feels
   // natural, but the audio duration may round to the next second on reload.
   // Snap any boundary very close to the end back to the real duration so we do
   // not create a tiny ghost section at the end of the song.
@@ -1394,7 +1394,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.132</span>
+              <span className="version-pill">v0.133</span>
             </div>
           </div>
 
