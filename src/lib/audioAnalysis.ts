@@ -116,6 +116,15 @@ function rms(samples: Float32Array, start: number, end: number) {
   return Math.sqrt(sum / count)
 }
 
+function median(values: number[]) {
+  if (!values.length) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle]
+}
+
 function bandpassRms(samples: Float32Array, sampleRate: number, start: number, end: number, frequency: number, q = 1) {
   const w0 = (2 * Math.PI * frequency) / sampleRate
   const alpha = Math.sin(w0) / (2 * q)
@@ -201,6 +210,41 @@ function scoreVocalLevelFromRatio(ratio: number, target: number) {
 
   return clamp(Math.round(81 - ((deviationPercent - 14) * 2.2)), 45, 100)
 }
+
+function blendVocalRatioAgainstMidBed(fullMixRatio: number, vocalBand: number, lowPunch: number, lowMidMask: number, midBody: number, snapEnergy: number) {
+  // v0.146:
+  // The previous sparse-arrangement fix still behaved too much like a full-mix
+  // ratio check. In a bass + vocal section the bass can dominate total RMS,
+  // while the vocal is actually very exposed against the available arrangement.
+  // Make sparse-bed detection more aggressive and judge those sections mostly
+  // against the non-vocal bed, not against missing guitars/pads.
+  // v0.145:
+  // Sparse arrangements need to be judged by vocal dominance, not by how much
+  // total midrange exists. A bass + vocal section can sound very forward even
+  // when the full-spectrum ratio is pulled down by bass energy. Blend harder
+  // toward the arrangement ratio when the non-vocal mid bed is thin, and reduce
+  // the low-bed penalty so bass does not masquerade as vocal masking.
+  // v0.144:
+  // A vocal score based only on vocal-band / whole-mix energy fails in sparse
+  // sections. Bass + voice can look "vocal too quiet" because the bass dominates
+  // full RMS, even when the voice is actually forward against the musical bed.
+  // Use the full-mix ratio for dense sections, but blend toward a mid-bed ratio
+  // when guitars/synth mids are sparse. This makes the card answer the musical
+  // question: how does the vocal sit against the non-vocal arrangement?
+  const midBed = (lowMidMask * 0.42) + (midBody * 0.72) + (snapEnergy * 0.24)
+  const lowBed = lowPunch * 0.055
+  const vocalVsArrangement = vocalBand / Math.max(0.0001, vocalBand + midBed + lowBed)
+  const midBedShare = midBed / Math.max(0.0001, midBed + lowPunch + vocalBand)
+  const sparseMidBlend = clamp((0.66 - midBedShare) / 0.42, 0, 0.96)
+  const effectiveRatio = (fullMixRatio * (1 - sparseMidBlend)) + (vocalVsArrangement * sparseMidBlend)
+  return {
+    effectiveRatio,
+    vocalVsArrangement,
+    sparseMidBlend,
+    midBedShare,
+  }
+}
+
 
 function estimateStereoWidth(buffer: AudioBuffer, startIndex: number, endIndex: number) {
   if (buffer.numberOfChannels < 2) return 0.48
@@ -1039,7 +1083,7 @@ function normaliseCustomBoundaries(boundaries: number[], duration: number) {
   return result.length >= 2 ? result : [0, duration]
 }
 
-export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile): SectionAnalysis[] {
+export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile, vocalOverrides: VocalOverrideMode[] = []): SectionAnalysis[] {
   const channel = buffer.getChannelData(0)
   const sampleRate = buffer.sampleRate
   const boundaries = customBoundaries?.length
@@ -1051,15 +1095,144 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const sectionEnd = Math.floor(boundaries[index + 1] * sampleRate)
     const full = rms(channel, sectionStart, sectionEnd)
     const band = bandpassRms(channel, sampleRate, sectionStart, sectionEnd, 2400, 0.85)
+    const presence = bandpassRms(channel, sampleRate, sectionStart, sectionEnd, 3200, 0.9)
+    const warmth = bandpassRms(channel, sampleRate, sectionStart, sectionEnd, 750, 0.9)
+    const air = bandpassRms(channel, sampleRate, sectionStart, sectionEnd, 8500, 0.75)
     return {
       band,
       full,
       ratio: band / Math.max(0.0001, full),
       energyVsSong: full / Math.max(0.0001, globalEnergy),
+      presenceShare: presence / Math.max(0.0001, presence + warmth + air),
     }
   })
   const strongestVocalBand = Math.max(0.0001, ...vocalScan.map((item) => item.band))
   const strongestVocalRatio = Math.max(0.0001, ...vocalScan.map((item) => item.ratio))
+  const medianVocalBand = Math.max(0.0001, median(vocalScan.map((item) => item.band)))
+  const medianVocalRatio = Math.max(0.0001, median(vocalScan.map((item) => item.ratio)))
+
+  // v0.137: Two-pass vocal-anchor detection.
+  // A single-section threshold was either too generous (instrumentals scored) or
+  // too strict (only the loudest chorus scored). First classify every section,
+  // then allow softer vocal sections through when they sit next to stronger
+  // vocal evidence. This catches verses/pre-choruses without turning intros,
+  // outros, and instrumental breaks into fake vocal cards.
+  const scanVocalEvidence = (sectionStart: number, sectionEnd: number, relaxed = false) => {
+    const full = rms(channel, sectionStart, sectionEnd)
+    const band = bandpassRms(channel, sampleRate, sectionStart, sectionEnd, 2400, 0.85)
+    const presence = bandpassRms(channel, sampleRate, sectionStart, sectionEnd, 3200, 0.9)
+    const warmth = bandpassRms(channel, sampleRate, sectionStart, sectionEnd, 750, 0.9)
+    const lowFormant = bandpassRms(channel, sampleRate, sectionStart, sectionEnd, 520, 0.9)
+    const midFormant = bandpassRms(channel, sampleRate, sectionStart, sectionEnd, 1150, 0.9)
+    const air = bandpassRms(channel, sampleRate, sectionStart, sectionEnd, 8500, 0.75)
+    const ratio = band / Math.max(0.0001, full)
+    const energyVsSong = full / Math.max(0.0001, globalEnergy)
+    const presenceShare = presence / Math.max(0.0001, presence + warmth + air)
+    const airShare = air / Math.max(0.0001, presence + warmth + lowFormant + midFormant + band + air)
+    const bandVsPeak = band / strongestVocalBand
+    const ratioVsPeak = ratio / strongestVocalRatio
+    const bandVsMedian = band / medianVocalBand
+    const ratioVsMedian = ratio / medianVocalRatio
+
+    // v0.154/v0.155: English-singing-ish vocal evidence.
+    // The older detector mostly asked whether a section had energy around
+    // 2-4 kHz. That let bright guitars/synths through and missed vocals that
+    // entered late in a section. This scanner still uses the frequency bands,
+    // but only as one ingredient. It also looks for centred formant-like energy,
+    // phrase/syllable movement, and rejects wide/steady instrumental textures.
+    const durationSamples = Math.max(1, sectionEnd - sectionStart)
+    const frameCount = Math.max(4, Math.min(12, Math.round((durationSamples / sampleRate) * 4)))
+    const frameSize = Math.max(1, Math.floor(durationSamples / frameCount))
+    const frameValues: number[] = []
+    for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      const frameStart = sectionStart + (frameIndex * frameSize)
+      const frameEnd = frameIndex === frameCount - 1 ? sectionEnd : Math.min(sectionEnd, frameStart + frameSize)
+      const frameFull = rms(channel, frameStart, frameEnd)
+      const frameWarmth = bandpassRms(channel, sampleRate, frameStart, frameEnd, 750, 0.9)
+      const frameCore = bandpassRms(channel, sampleRate, frameStart, frameEnd, 1150, 0.9)
+      const framePresence = bandpassRms(channel, sampleRate, frameStart, frameEnd, 2400, 0.85)
+      frameValues.push((frameWarmth * 0.35) + (frameCore * 0.35) + (framePresence * 0.55) + (frameFull * 0.05))
+    }
+    const frameMean = frameValues.reduce((sum, value) => sum + value, 0) / Math.max(1, frameValues.length)
+    const frameVariance = frameValues.reduce((sum, value) => sum + ((value - frameMean) * (value - frameMean)), 0) / Math.max(1, frameValues.length)
+    const frameStd = Math.sqrt(frameVariance)
+    const sortedFrames = [...frameValues].sort((a, b) => a - b)
+    const lowFrame = sortedFrames[Math.floor(sortedFrames.length * 0.25)] ?? frameMean
+    const highFrame = sortedFrames[Math.floor(sortedFrames.length * 0.80)] ?? frameMean
+    const movementRatio = (frameStd + Math.max(0, highFrame - lowFrame) * 0.45) / Math.max(0.0001, frameMean)
+    const phraseMovement = clamp((movementRatio - 0.055) / 0.24, 0, 1)
+
+    const formantTotal = Math.max(0.0001, lowFormant + warmth + midFormant + band + presence)
+    const formantSpread = Math.min(
+      1,
+      (Math.min(warmth, midFormant, band) * 3.4) / Math.max(0.0001, (warmth + midFormant + band)),
+    )
+    const vowelShape = clamp((formantSpread * 0.58) + (presenceShare * 0.32) + ((1 - airShare) * 0.18), 0, 1)
+    const coreShare = (warmth + midFormant + band + presence) / Math.max(0.0001, formantTotal + air)
+    const centreSeparation = buffer.numberOfChannels >= 2
+      ? (
+          estimateBandStereoSeparation(buffer, sampleRate, sectionStart, sectionEnd, 750, 0.9)
+          + estimateBandStereoSeparation(buffer, sampleRate, sectionStart, sectionEnd, 1150, 0.9)
+          + estimateBandStereoSeparation(buffer, sampleRate, sectionStart, sectionEnd, 2400, 0.85)
+        ) / 3
+      : 0
+    const centreFocus = clamp(1 - (centreSeparation / 0.46), 0, 1)
+    const instrumentalTexturePenalty = clamp(((centreSeparation - 0.22) / 0.22) + ((airShare - 0.28) / 0.32), 0, 1)
+
+    const spectralScore =
+      (bandVsPeak * 24)
+      + (ratioVsPeak * 13)
+      + (bandVsMedian * 7)
+      + (ratioVsMedian * 5)
+      + (presenceShare * 10)
+      + (energyVsSong * 4)
+
+    const behaviourScore =
+      spectralScore
+      + (phraseMovement * 20)
+      + (vowelShape * 18)
+      + (centreFocus * 16)
+      + (coreShare * 8)
+      - (instrumentalTexturePenalty * 18)
+
+    const score = behaviourScore
+
+    const hasEnglishVocalBehaviour = Boolean(
+      centreFocus >= (relaxed ? 0.34 : 0.38)
+      && vowelShape >= (relaxed ? 0.42 : 0.46)
+      && coreShare >= 0.58
+      && airShare <= (relaxed ? 0.56 : 0.50)
+      && (
+        phraseMovement >= (relaxed ? 0.14 : 0.18)
+        || (vowelShape >= 0.60 && presenceShare >= 0.23)
+      )
+    )
+
+    const strong =
+      hasEnglishVocalBehaviour
+      && ratio >= 0.064
+      && bandVsPeak >= 0.10
+      && bandVsMedian >= 0.50
+      && energyVsSong >= 0.055
+      && score >= 36
+
+    const soft =
+      hasEnglishVocalBehaviour
+      && ratio >= (relaxed ? 0.047 : 0.055)
+      && bandVsPeak >= (relaxed ? 0.065 : 0.085)
+      && ratioVsMedian >= (relaxed ? 0.44 : 0.55)
+      && bandVsMedian >= (relaxed ? 0.36 : 0.46)
+      && energyVsSong >= (relaxed ? 0.036 : 0.050)
+      && score >= (relaxed ? 27 : 31)
+
+    return { strong, soft, score, band, ratio, energyVsSong, presenceShare, phraseMovement, vowelShape, centreFocus, airShare, coreShare }
+  }
+
+  const vocalEvidenceScan = vocalScan.map((_, index) => {
+    const sectionStart = Math.floor(boundaries[index] * sampleRate)
+    const sectionEnd = Math.floor(boundaries[index + 1] * sampleRate)
+    return scanVocalEvidence(sectionStart, sectionEnd)
+  })
   const sections: SectionAnalysis[] = []
 
   for (let i = 0; i < boundaries.length - 1; i += 1) {
@@ -1282,33 +1455,404 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       ? vocalRatio
       : (vocalRatio * (1 - rescueAmount)) + (bestVocalAnchorRatio * rescueAmount)
 
+    const vocalArrangementBalance = blendVocalRatioAgainstMidBed(
+      rescuedVocalRatio,
+      vocalBand,
+      lowPunch,
+      lowMidMask,
+      midBody,
+      snapEnergy,
+    )
+    const rawJudgedVocalRatio = vocalArrangementBalance.effectiveRatio
+    // v0.147: arrangement-density vocal window.
+    // Sparse commercial sections can carry very forward vocals without sounding
+    // wrong, while bass + vocal sections should not be punished as "too quiet"
+    // just because the non-vocal midrange bed is absent. Instead of moving the
+    // target up or down, keep the genre target stable and compress the judged
+    // ratio toward it as the arrangement gets sparser. This creates a wider,
+    // breathing acceptance zone for exposed vocals without changing dense
+    // chorus behaviour.
+    const sparseVocalTolerance = vocalArrangementBalance.sparseMidBlend
+    // v0.149: vocal level nudge direction fix.
+    // The previous attempt nudged the target upward, which made the visible
+    // slider move left because the same vocal ratio became further below the
+    // target. To move the displayed vocal placement slightly to the right, lower
+    // the judgement target a touch instead. This keeps the adaptive sparse
+    // arrangement window intact while matching the APT/Billie Jean calibration.
+    const vocalJudgementTarget = clamp(vocalTarget - 0.018, 0.24, 0.48)
+    const judgedVocalRatio = vocalJudgementTarget + ((rawJudgedVocalRatio - vocalJudgementTarget) * (1 - (sparseVocalTolerance * 0.72)))
+
     const drumsVsEverything = scoreAroundTarget(drumLevelRatio, drumLevelTarget, 150, 40, 94)
     const vocalEnergyVsSong = vocalBand / Math.max(0.0001, globalEnergy)
     const sectionEnergyVsSong = fullRms / Math.max(0.0001, globalEnergy)
     const vocalBandVsSongPeak = vocalBand / strongestVocalBand
     const vocalRatioVsSongPeak = vocalRatio / strongestVocalRatio
-    // v0.134: The first N/A pass was too strict because it compared the vocal
-    // proxy to whole-song energy. In mastered commercial mixes the 2–4 kHz
-    // vocal band is often a modest slice of total RMS, so every section could
-    // fail. Use song-relative vocal anchors instead: a section counts as vocal
-    // when its vocal-band energy is close enough to the song's strongest vocal
-    // section and the section itself is not just a tiny fade/noise tail.
-    const hasVocalAnchor = Boolean(
-      (
-        vocalRatio >= 0.075
-        && vocalBandVsSongPeak >= 0.24
-        && vocalRatioVsSongPeak >= 0.42
-        && sectionEnergyVsSong >= 0.26
+    const vocalBandVsSongMedian = vocalBand / medianVocalBand
+    const vocalRatioVsSongMedian = vocalRatio / medianVocalRatio
+    const vocalPresenceBand = bandpassRms(channel, sampleRate, startIndex, endIndex, 3200, 0.9)
+    const vocalWarmthBand = bandpassRms(channel, sampleRate, startIndex, endIndex, 750, 0.9)
+    const cymbalAirBand = bandpassRms(channel, sampleRate, startIndex, endIndex, 8500, 0.75)
+    const vocalPresenceShare = vocalPresenceBand / Math.max(0.0001, vocalPresenceBand + vocalWarmthBand + cymbalAirBand)
+
+    // v0.136: Rebalance vocal N/A detection after v0.135 became too conservative.
+    // The previous pass avoided false positives, but it only allowed the most obvious
+    // vocal section through. This gate now blends three signs of a real vocal anchor:
+    // 1) song-relative vocal-band level, 2) vocal-band ratio compared with the song's
+    // strongest/median vocal-like sections, and 3) a presence shape that is not mostly
+    // cymbal air. This keeps intros/outros/instrumentals as N/A while letting quieter
+    // verses and dense choruses score again.
+    const relativeVocalScore =
+      (vocalBandVsSongPeak * 42)
+      + (vocalRatioVsSongPeak * 24)
+      + (vocalBandVsSongMedian * 10)
+      + (vocalRatioVsSongMedian * 8)
+      + (vocalPresenceShare * 18)
+      + (sectionEnergyVsSong * 8)
+
+    const hasBalancedVocalEvidence =
+      vocalRatio >= 0.088
+      && vocalBandVsSongPeak >= 0.22
+      && vocalRatioVsSongPeak >= 0.36
+      && vocalBandVsSongMedian >= 0.92
+      && vocalPresenceShare >= 0.24
+      && sectionEnergyVsSong >= 0.18
+      && relativeVocalScore >= 38
+
+    const hasQuietVocalEvidence =
+      vocalRatio >= 0.082
+      && vocalBandVsSongPeak >= 0.18
+      && vocalRatioVsSongMedian >= 1.02
+      && vocalBandVsSongMedian >= 0.86
+      && vocalPresenceShare >= 0.27
+      && sectionEnergyVsSong >= 0.12
+      && relativeVocalScore >= 34
+
+    const hasDenseSectionVocalEvidence =
+      vocalRatio >= 0.122
+      && vocalBandVsSongPeak >= 0.20
+      && vocalBandVsSongMedian >= 1.02
+      && vocalPresenceShare >= 0.25
+      && sectionEnergyVsSong >= 0.16
+
+    const nearbyStrongVocalEvidence = Boolean(
+      vocalEvidenceScan[i - 1]?.strong
+      || vocalEvidenceScan[i + 1]?.strong
+      || (vocalEvidenceScan[i - 2]?.strong && vocalEvidenceScan[i - 1]?.soft)
+      || (vocalEvidenceScan[i + 2]?.strong && vocalEvidenceScan[i + 1]?.soft),
+    )
+    const hasContinuityVocalEvidence = Boolean(vocalEvidenceScan[i]?.soft && nearbyStrongVocalEvidence)
+
+    // v0.138: Catch sections that start instrumental but gain vocals halfway through,
+    // while rejecting isolated instrumental false positives. A whole-section average can
+    // dilute vocals that arrive in the middle/end; checking each half gives those
+    // sections a fair shot. Conversely, a lone section with no neighbouring vocal
+    // evidence now needs very strong whole-section evidence before it can score.
+    const firstHalfEvidence = scanVocalEvidence(startIndex, midpointIndex, true)
+    const secondHalfEvidence = scanVocalEvidence(midpointIndex, endIndex, true)
+    const localHalfPeakScore = Math.max(firstHalfEvidence.score, secondHalfEvidence.score)
+    const localHalfScoreDelta = Math.abs(firstHalfEvidence.score - secondHalfEvidence.score)
+
+    // v0.150: window-based vocal detection and level basis.
+    // Whole-section averaging fails when a section begins instrumental and vocals
+    // arrive halfway through. Split the section into small windows, find the
+    // vocal-active windows, then judge the vocal level from those windows only.
+    // This keeps late-entry vocals alive without letting a steady instrumental
+    // texture borrow confidence from the whole block.
+    const windowCount = Math.max(3, Math.min(8, Math.round(sectionDuration / 3)))
+    const windowSize = Math.max(1, Math.floor((endIndex - startIndex) / windowCount))
+    const vocalWindows = Array.from({ length: windowCount }, (_, windowIndex) => {
+      const windowStart = startIndex + (windowIndex * windowSize)
+      const windowEnd = windowIndex === windowCount - 1 ? endIndex : Math.min(endIndex, windowStart + windowSize)
+      const evidence = scanVocalEvidence(windowStart, windowEnd, true)
+      return { windowStart, windowEnd, evidence }
+    })
+    const strongestWindowScore = Math.max(0, ...vocalWindows.map((item) => item.evidence.score))
+    const weakestWindowScore = Math.min(...vocalWindows.map((item) => item.evidence.score))
+    const windowScoreSpread = strongestWindowScore - weakestWindowScore
+    // v0.155/v0.156: sustained vocal-streak detector.
+    // Treat N/A as "no credible vocal phrase anywhere in this section", not
+    // "the whole section average looks vocal". A section that starts
+    // instrumental and then gains vocals should score if it contains a local
+    // sustained run of vocal-like windows. A steady instrumental texture should
+    // fail because it lacks a phrase-like run/entry shape.
+    const isVocalLikeWindow = (item: { evidence: ReturnType<typeof scanVocalEvidence> }) => {
+      const evidence = item.evidence
+      const behaviouralPass = Boolean(
+        evidence.centreFocus >= 0.36
+        && evidence.vowelShape >= 0.43
+        && evidence.coreShare >= 0.56
+        && evidence.airShare <= 0.58
+        && (
+          evidence.phraseMovement >= 0.12
+          || evidence.strong
+          || (evidence.score >= 34 && evidence.presenceShare >= 0.24)
+        )
       )
+      return behaviouralPass && (evidence.strong || evidence.soft || evidence.score >= 30)
+    }
+
+    const activeVocalWindows = vocalWindows.filter(isVocalLikeWindow)
+    const activeVocalWindowShare = activeVocalWindows.reduce((sum, item) => sum + Math.max(1, item.windowEnd - item.windowStart), 0) / Math.max(1, endIndex - startIndex)
+    const activeRun = vocalWindows.reduce((bestRun, item) => {
+      if (!isVocalLikeWindow(item)) return { current: 0, best: bestRun.best, windows: 0, bestWindows: bestRun.bestWindows }
+      const length = Math.max(1, item.windowEnd - item.windowStart)
+      const current = bestRun.current + length
+      const windows = bestRun.windows + 1
+      return {
+        current,
+        best: Math.max(bestRun.best, current),
+        windows,
+        bestWindows: Math.max(bestRun.bestWindows, windows),
+      }
+    }, { current: 0, best: 0, windows: 0, bestWindows: 0 })
+    const activeVocalWindowRun = activeRun.best / Math.max(1, endIndex - startIndex)
+    const activeVocalWindowRunCount = activeRun.bestWindows
+    const activeAveragePhraseMovement = activeVocalWindows.length
+      ? activeVocalWindows.reduce((sum, item) => sum + item.evidence.phraseMovement, 0) / activeVocalWindows.length
+      : 0
+    const activeAverageScore = activeVocalWindows.length
+      ? activeVocalWindows.reduce((sum, item) => sum + item.evidence.score, 0) / activeVocalWindows.length
+      : 0
+    const windowEnergyValues = vocalWindows.map((item) => rms(channel, item.windowStart, item.windowEnd))
+    const firstWindowEnergy = windowEnergyValues[0] ?? 0
+    const lastWindowEnergy = windowEnergyValues[windowEnergyValues.length - 1] ?? 0
+    const fadingEnergyRatio = lastWindowEnergy / Math.max(0.0001, firstWindowEnergy)
+    const downwardWindowSteps = windowEnergyValues.slice(1).filter((value, idx) => value < windowEnergyValues[idx] * 0.94).length
+    const strongestWindow = vocalWindows.reduce((best, item) => item.evidence.score > best.evidence.score ? item : best, vocalWindows[0])
+    const averageInactiveWindowScore = (() => {
+      const inactive = vocalWindows.filter((item) => !isVocalLikeWindow(item))
+      if (!inactive.length) return weakestWindowScore
+      return inactive.reduce((sum, item) => sum + item.evidence.score, 0) / inactive.length
+    })()
+    const vocalEntryLift = strongestWindowScore - averageInactiveWindowScore
+    const hasSustainedVocalStreak = Boolean(
+      activeVocalWindowRunCount >= 2
+      || activeVocalWindowRun >= 0.18
+      || (activeVocalWindows.length >= 1 && strongestWindow.evidence.strong && activeVocalWindowShare >= 0.08)
+    )
+    const looksLikeLateVocalEntry = Boolean(
+      hasSustainedVocalStreak
+      && vocalEntryLift >= 4.5
+      && windowScoreSpread >= 5
+    )
+    const looksLikeFullSectionVocal = Boolean(
+      activeVocalWindowShare >= 0.36
+      && activeVocalWindowRun >= 0.25
+      && strongestWindowScore >= 34
+      && activeVocalWindows.some((item) => item.evidence.strong || item.evidence.score >= 38)
+    )
+    // v0.156: sustained chord / fade-out rejection.
+    // A single fading guitar/piano chord can look centred, tonal, and formant-ish
+    // for every window, which fools a sustained-window detector. Real English
+    // singing usually has more syllabic/phrase movement or a clear entrance. If
+    // the whole section is a smooth downward fade with weak phrase movement and
+    // no protected vocal evidence, treat it as an instrumental outro texture.
+    const looksLikeSustainedFadeTexture = Boolean(
+      activeVocalWindowShare >= 0.42
+      && activeVocalWindowRun >= 0.34
+      && activeAveragePhraseMovement < 0.18
+      && vocalEntryLift < 6.5
+      && fadingEnergyRatio < 0.82
+      && downwardWindowSteps >= Math.max(1, Math.floor(windowEnergyValues.length * 0.42))
+      && activeAverageScore < 42
+      && !vocalWindows.some((item) => item.evidence.strong && item.evidence.phraseMovement >= 0.16)
+    )
+
+    const hasWindowedVocalEvidence = Boolean(
+      activeVocalWindows.length > 0
+      && strongestWindowScore >= 29
+      && (looksLikeLateVocalEntry || looksLikeFullSectionVocal)
+      && !looksLikeSustainedFadeTexture
+    )
+
+    const weightedWindowMetric = (fn: (start: number, end: number) => number, fallback: number) => {
+      if (!hasWindowedVocalEvidence) return fallback
+      let total = 0
+      let weight = 0
+      for (const item of activeVocalWindows) {
+        const length = Math.max(1, item.windowEnd - item.windowStart)
+        total += fn(item.windowStart, item.windowEnd) * length
+        weight += length
+      }
+      return weight > 0 ? total / weight : fallback
+    }
+
+    const vocalLevelFullRms = weightedWindowMetric((windowStart, windowEnd) => rms(channel, windowStart, windowEnd), fullRms)
+    const vocalLevelBand = weightedWindowMetric((windowStart, windowEnd) => bandpassRms(channel, sampleRate, windowStart, windowEnd, 2400, 0.85), vocalBand)
+    const vocalLevelLowPunch = weightedWindowMetric((windowStart, windowEnd) => bandpassRms(channel, sampleRate, windowStart, windowEnd, 75, 0.9), lowPunch)
+    const vocalLevelLowMidMask = weightedWindowMetric((windowStart, windowEnd) => bandpassRms(channel, sampleRate, windowStart, windowEnd, 260, 0.85), lowMidMask)
+    const vocalLevelMidBody = weightedWindowMetric((windowStart, windowEnd) => bandpassRms(channel, sampleRate, windowStart, windowEnd, 1050, 0.85), midBody)
+    const vocalLevelSnapEnergy = weightedWindowMetric((windowStart, windowEnd) => bandpassRms(channel, sampleRate, windowStart, windowEnd, 6500, 0.7), snapEnergy)
+
+    const windowedVocalRatio = vocalLevelBand / Math.max(0.0001, vocalLevelFullRms)
+    const windowedVocalArrangementBalance = blendVocalRatioAgainstMidBed(
+      windowedVocalRatio,
+      vocalLevelBand,
+      vocalLevelLowPunch,
+      vocalLevelLowMidMask,
+      vocalLevelMidBody,
+      vocalLevelSnapEnergy,
+    )
+    const finalSparseVocalTolerance = hasWindowedVocalEvidence
+      ? windowedVocalArrangementBalance.sparseMidBlend
+      : sparseVocalTolerance
+    const finalRawJudgedVocalRatio = hasWindowedVocalEvidence
+      ? windowedVocalArrangementBalance.effectiveRatio
+      : rawJudgedVocalRatio
+    const finalJudgedVocalRatio = vocalJudgementTarget + ((finalRawJudgedVocalRatio - vocalJudgementTarget) * (1 - (finalSparseVocalTolerance * 0.72)))
+
+    // v0.142: partial vocal detection now needs a local entrance/change.
+    // A sustained instrumental texture can look softly vocal-ish in both halves,
+    // especially when surrounded by vocal sections. Real partial-vocal sections
+    // usually show either a strong half-section signature or a noticeable jump
+    // from one half to the other when the vocal arrives.
+    const hasPartialVocalEvidence = Boolean(
+      hasWindowedVocalEvidence
+      || (firstHalfEvidence.strong || secondHalfEvidence.strong)
       || (
-        vocalRatio >= 0.12
-        && vocalBandVsSongPeak >= 0.18
-        && sectionEnergyVsSong >= 0.20
+        (firstHalfEvidence.soft || secondHalfEvidence.soft)
+        && nearbyStrongVocalEvidence
+        && (localHalfScoreDelta >= 5.5 || localHalfPeakScore >= 31)
       ),
     )
-    const vocalLevel = hasVocalAnchor ? scoreVocalLevelFromRatio(rescuedVocalRatio, vocalTarget) : null
+    const hasNeighbouringVocalContext = Boolean(nearbyStrongVocalEvidence || vocalEvidenceScan[i - 1]?.soft || vocalEvidenceScan[i + 1]?.soft)
+
+    // v0.139/v0.140: tighten the last remaining false-positive path.
+    // The continuity pass is useful for quieter sung sections, but a bright
+    // instrumental between vocal sections can look vocal-ish for the whole
+    // block. Require a real local vocal bump before continuity is allowed to
+    // turn a section into a scored Vocal card. This keeps half-section vocals
+    // working, but stops one sustained guitar/synth texture from borrowing
+    // credibility from neighbouring vocal sections.
+    // v0.140: make continuity much harder to trigger on a sustained instrumental.
+    // A steady guitar/synth lead can have plenty of presence energy across the
+    // whole section, so a high local score alone is not enough. For continuity
+    // to rescue a section, we now need either a strong half-section vocal
+    // signature, or a clear mid-section change that looks like a vocal entering.
+    const localHalfHasVocalShape = Boolean(
+      firstHalfEvidence.strong
+      || secondHalfEvidence.strong
+      || (localHalfPeakScore >= 27 && localHalfScoreDelta >= 5.5)
+      || (localHalfPeakScore >= 24 && localHalfScoreDelta >= 8 && Math.max(firstHalfEvidence.presenceShare, secondHalfEvidence.presenceShare) >= 0.24)
+    )
+    const continuityOnlyVocalGuess = Boolean(
+      hasContinuityVocalEvidence
+      && !hasBalancedVocalEvidence
+      && !hasQuietVocalEvidence
+      && !hasDenseSectionVocalEvidence
+      && !vocalEvidenceScan[i]?.strong
+      && !hasPartialVocalEvidence
+    )
+    const isLikelyInstrumentalContinuityFalsePositive = Boolean(
+      continuityOnlyVocalGuess
+      && !localHalfHasVocalShape
+    )
+    const isIsolatedWeakVocalGuess = Boolean(
+      !hasNeighbouringVocalContext
+      && !hasPartialVocalEvidence
+      && !vocalEvidenceScan[i]?.strong
+      && relativeVocalScore < 46,
+    )
+
+    const hasVocalAnchorCandidate = Boolean(
+      // v0.154: make the local English-singing window scan the source of truth.
+      // Whole-section and neighbouring-section guesses can still inform level
+      // scoring, but they cannot create a Vocal card on their own. This is what
+      // stops intros/instrumentals showing a % while allowing half-section vocal
+      // entries to score from their active windows.
+      hasWindowedVocalEvidence
+      && !isIsolatedWeakVocalGuess
+      && !isLikelyInstrumentalContinuityFalsePositive,
+    )
+
+    const candidateVocalBalanceItem = makeLevelBalanceItem('vocals', 'Vocals', finalJudgedVocalRatio, vocalJudgementTarget)
+    const candidateVocalDisplay = Math.abs(candidateVocalBalanceItem.displayPercent ?? candidateVocalBalanceItem.deviationPercent)
+
+    // v0.141: final false-positive guard.
+    // A true no-vocal instrumental can still produce a tiny vocal-like reading
+    // from guitar/synth presence. When the visible vocal confidence is only a
+    // single-digit/very-low value, treat it as no reliable vocal anchor rather
+    // than showing a misleading Vocal card. Real vocal sections should have
+    // enough confidence to clear this floor, even if their level needs work.
+    const instrumentalTextureFalsePositive = Boolean(
+      !firstHalfEvidence.strong
+      && !secondHalfEvidence.strong
+      && localHalfScoreDelta < 5.5
+      && localHalfPeakScore < 31
+      && !vocalEvidenceScan[i]?.strong
+      && (hasContinuityVocalEvidence || hasPartialVocalEvidence)
+    )
+
+    const provisionalVocalLevel = hasVocalAnchorCandidate && !instrumentalTextureFalsePositive
+      ? scoreVocalLevelFromRatio(finalJudgedVocalRatio, vocalJudgementTarget)
+      : null
+
+    // v0.143: final card-level confidence gate.
+    // The remaining instrumental false positive was not failing the evidence gate;
+    // it was reaching the visible card as a very low vocal score around 9%.
+    // Treat ultra-low vocal scores as no reliable vocal anchor unless the section
+    // has strong/balanced/full evidence. Partial and continuity evidence alone can
+    // be fooled by sustained guitars/synths, so they no longer override this floor.
+    const hasProtectedFullVocalEvidence = Boolean(
+      vocalEvidenceScan[i]?.strong
+      || hasBalancedVocalEvidence
+      || hasQuietVocalEvidence
+      || hasDenseSectionVocalEvidence
+      || firstHalfEvidence.strong
+      || secondHalfEvidence.strong
+    )
+
+    // v0.158: targeted final-outro instrumental guard.
+    // v0.157 tried to reject sustained chords globally and accidentally broke
+    // earlier N/A sections. Keep the good v0.156 detector, but add one narrow
+    // rule for the final section only: if it is the last section, has no strong
+    // protected vocal evidence, and looks like a low-motion fade/sustain texture,
+    // treat it as an instrumental outro rather than a vocal card.
+    const isFinalSection = i === boundaries.length - 2
+    const finalEnergyRatio = lastWindowEnergy / Math.max(0.0001, Math.max(...windowEnergyValues))
+    const looksLikeFinalInstrumentalOutro = Boolean(
+      isFinalSection
+      && !hasProtectedFullVocalEvidence
+      && activeVocalWindows.length > 0
+      && activeAveragePhraseMovement < 0.24
+      && vocalEntryLift < 12
+      && finalEnergyRatio < 0.88
+      && strongestWindowScore < 46
+    )
+
+    const vocalOverride = vocalOverrides[i] ?? 'auto'
+    const forcedVocalLevel = scoreVocalLevelFromRatio(finalJudgedVocalRatio, vocalJudgementTarget)
+    const autoVocalAnchor = Boolean(
+      provisionalVocalLevel != null
+      // v0.155: the local sustained-window detector is now allowed to keep
+      // late-entry vocal sections alive even when the visible balance display is
+      // close to centre. The hard low-score floor still blocks weak instrumental
+      // ghosts, but a credible local phrase no longer gets thrown away just
+      // because only half the section contains vocals.
+      && !looksLikeFinalInstrumentalOutro
+      && provisionalVocalLevel >= 15
+      && (
+        provisionalVocalLevel >= 18
+        || hasProtectedFullVocalEvidence
+        || looksLikeLateVocalEntry
+        || looksLikeFullSectionVocal
+      )
+      && (
+        candidateVocalDisplay >= 18
+        || hasProtectedFullVocalEvidence
+        || looksLikeLateVocalEntry
+        || looksLikeFullSectionVocal
+      ),
+    )
+
+    const hasVocalAnchor = vocalOverride === 'instrumental'
+      ? false
+      : vocalOverride === 'vocal'
+        ? true
+        : autoVocalAnchor
+    const vocalLevel = hasVocalAnchor ? (vocalOverride === 'vocal' ? forcedVocalLevel : provisionalVocalLevel) : null
     const vocalBalanceItem = hasVocalAnchor
-      ? makeLevelBalanceItem('vocals', 'Vocals', rescuedVocalRatio, vocalTarget)
+      ? makeLevelBalanceItem('vocals', 'Vocals', finalJudgedVocalRatio, vocalJudgementTarget)
       : {
           key: 'vocals',
           label: 'Vocals',
@@ -1384,29 +1928,37 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
             estimatedLift: '+1 to +3 impact',
             target: 'Drums',
           },
-      vocalLevel < 80
-        ? vocalRatio < VOCAL_LEVEL_TARGET_ROCK
-          ? {
-              title: vocalLevel < 72 ? 'Try +2 dB on the vocal first' : 'Try +1 dB on the vocal first',
-              detail: vocalLevel < 72 ? 'Start simple: lift the lead vocal by about +2 dB and re-score. If it still feels tucked away, automate only the buried words before reaching for EQ.' : 'Start simple: lift the lead vocal by about +1 dB and re-score. If it still feels tucked away, automate only the buried words before reaching for EQ.',
-              priority: vocalLevel < 72 ? 'High impact' : 'Worth exploring',
-              estimatedLift: vocalLevel < 72 ? '+4 to +9 vocal balance' : '+2 to +5 vocal balance',
-              target: 'Vocal level',
-            }
-          : {
-              title: vocalLevel < 72 ? 'Try -2 dB on the vocal first' : 'Try -1 dB on the vocal first',
-              detail: vocalLevel < 72 ? 'The vocal is likely too forward for a rock reference. Pull it down by about -2 dB, then check whether the track feels more glued together without losing the lyric.' : 'The vocal may be a touch too forward. Pull it down by about -1 dB, then check whether the track feels more glued together without losing the lyric.',
-              priority: vocalLevel < 72 ? 'High impact' : 'Worth exploring',
-              estimatedLift: vocalLevel < 72 ? '+3 to +7 vocal balance' : '+2 to +5 vocal balance',
-              target: 'Vocal level',
-            }
-        : {
-            title: 'Vocal is close. Use automation for the win',
-            detail: 'Listen for words that duck behind guitars or synths, then automate those phrases up instead of lifting the whole vocal track.',
-            priority: 'Worth exploring',
-            estimatedLift: '+1 to +3 vocal balance',
+      vocalLevel == null
+        ? {
+            title: 'No vocal anchor detected here',
+            detail: 'This section looks instrumental or too sparse for vocal scoring, so the vocal card is marked N/A and excluded from the section percentage.',
+            priority: 'Optional polish',
+            estimatedLift: 'N/A',
             target: 'Vocal',
-          },
+          }
+        : vocalLevel < 80
+          ? finalJudgedVocalRatio < vocalJudgementTarget
+            ? {
+                title: vocalLevel < 72 ? 'Try +2 dB on the vocal first' : 'Try +1 dB on the vocal first',
+                detail: vocalLevel < 72 ? 'Start simple: lift the lead vocal by about +2 dB and re-score. If it still feels tucked away, automate only the buried words before reaching for EQ.' : 'Start simple: lift the lead vocal by about +1 dB and re-score. If it still feels tucked away, automate only the buried words before reaching for EQ.',
+                priority: vocalLevel < 72 ? 'High impact' : 'Worth exploring',
+                estimatedLift: vocalLevel < 72 ? '+4 to +9 vocal balance' : '+2 to +5 vocal balance',
+                target: 'Vocal level',
+              }
+            : {
+                title: vocalLevel < 72 ? 'Try -2 dB on the vocal first' : 'Try -1 dB on the vocal first',
+                detail: vocalLevel < 72 ? 'The vocal is likely too forward for a rock reference. Pull it down by about -2 dB, then check whether the track feels more glued together without losing the lyric.' : 'The vocal may be a touch too forward. Pull it down by about -1 dB, then check whether the track feels more glued together without losing the lyric.',
+                priority: vocalLevel < 72 ? 'High impact' : 'Worth exploring',
+                estimatedLift: vocalLevel < 72 ? '+3 to +7 vocal balance' : '+2 to +5 vocal balance',
+                target: 'Vocal level',
+              }
+          : {
+              title: 'Vocal is close. Use automation for the win',
+              detail: 'Listen for words that duck behind guitars or synths, then automate those phrases up instead of lifting the whole vocal track.',
+              priority: 'Worth exploring',
+              estimatedLift: '+1 to +3 vocal balance',
+              target: 'Vocal',
+            },
       primaryTonalRecommendation(tonalBalanceBands, tonalBalance),
       i === 0
         ? (impact < 82
@@ -1481,6 +2033,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       strengths,
       recommendations,
       metrics,
+      vocalOverride,
       metricInsights: buildMetricInsights(metrics, recommendations, i === 0),
       tonalBalanceBands,
       clarityBands,

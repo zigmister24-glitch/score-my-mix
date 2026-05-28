@@ -68,6 +68,8 @@ export interface SectionMetrics {
   vocalLevel: number | null
 }
 
+export type VocalOverrideMode = 'auto' | 'vocal' | 'instrumental'
+
 export interface SectionAnalysis {
   id: string
   label: string
@@ -86,4 +88,5 @@ export interface SectionAnalysis {
   levelBalance?: LevelBalanceStrip
   impactStrip?: ImpactStrip
   widthBands?: BalanceStripItem[]
+  vocalOverride?: VocalOverrideMode
 }

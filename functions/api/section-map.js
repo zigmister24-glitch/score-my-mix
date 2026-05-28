@@ -31,11 +31,15 @@ function normaliseSections(sections, duration) {
 
   const cleaned = sections
     .slice(0, MAX_SECTIONS)
-    .map((section) => ({
-      start: Number(section.start),
-      end: Number(section.end),
-      label: safeText(section.label || "", 60),
-    }))
+    .map((section) => {
+      const vocalOverride = String(section.vocalOverride || "auto");
+      return {
+        start: Number(section.start),
+        end: Number(section.end),
+        label: safeText(section.label || "", 60),
+        vocalOverride: ["auto", "vocal", "instrumental"].includes(vocalOverride) ? vocalOverride : "auto",
+      };
+    })
     .filter((section) => Number.isFinite(section.start) && Number.isFinite(section.end))
     .map((section) => ({
       ...section,
@@ -49,6 +53,7 @@ function normaliseSections(sections, duration) {
     start: Number(section.start.toFixed(3)),
     end: Number(section.end.toFixed(3)),
     label: section.label,
+    vocalOverride: section.vocalOverride || "auto",
   }));
 }
 

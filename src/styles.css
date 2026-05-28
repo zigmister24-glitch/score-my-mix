@@ -1187,3 +1187,55 @@ button, input { font: inherit; }
   line-height: 1.45;
   color: rgba(255,255,255,0.62);
 }
+
+.vocal-override-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 130px;
+}
+
+.vocal-override-control label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.72);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.vocal-override-control select {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(10, 14, 24, 0.72);
+  color: #f8fafc;
+  padding: 0.48rem 0.75rem;
+  font-size: 0.82rem;
+  outline: none;
+}
+
+.metric-card-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.vocal-override-card-select {
+  margin-left: auto;
+  max-width: 112px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(10, 14, 24, 0.72);
+  color: #f8fafc;
+  padding: 0.34rem 0.62rem;
+  font-size: 0.76rem;
+  outline: none;
+}
+
+.vocal-override-card-select:focus {
+  border-color: rgba(87, 225, 174, 0.55);
+  box-shadow: 0 0 0 2px rgba(87, 225, 174, 0.12);
+}

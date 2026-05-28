@@ -1,7 +1,7 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import WaveformPanel, { WaveformHandle } from './components/WaveformPanel'
 import { AnalysisGenreProfile, buildSections, decodeAudioFile, formatTime } from './lib/audioAnalysis'
-import { SectionAnalysis } from './lib/types'
+import { SectionAnalysis, VocalOverrideMode } from './lib/types'
 
 declare global {
   interface Window {
@@ -124,6 +124,7 @@ type SavedSectionMapItem = {
   start: number
   end: number
   label?: string
+  vocalOverride?: VocalOverrideMode
 }
 
 type SavedSectionMap = {
@@ -441,6 +442,7 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
         start: Number(section.start.toFixed(3)),
         end: Number(savedEnd.toFixed(3)),
         label: section.label,
+        vocalOverride: section.vocalOverride ?? 'auto',
       }
     }),
   }
@@ -547,6 +549,14 @@ function boundariesFromSectionMap(map: SavedSectionMap, durationSeconds: number)
 function boundariesFromSections(sections: SectionAnalysis[]) {
   if (!sections.length) return []
   return [sections[0].start, ...sections.map((section) => section.end)]
+}
+
+function vocalOverridesFromSections(sections: SectionAnalysis[]): VocalOverrideMode[] {
+  return sections.map((section) => section.vocalOverride ?? 'auto')
+}
+
+function vocalOverridesFromSavedMap(map: SavedSectionMap | null): VocalOverrideMode[] {
+  return map?.sections?.map((section) => section.vocalOverride ?? 'auto') ?? []
 }
 
 async function readLeaderboard(): Promise<{
@@ -910,7 +920,7 @@ export default function App() {
 
       setSelectedGenre(loadedGenre)
       const nextSections = savedMap
-        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration), currentGenreProfile(loadedGenre))
+        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration), currentGenreProfile(loadedGenre), vocalOverridesFromSavedMap(savedMap))
         : buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
       autoSectionsRef.current = buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
       setSectionMapStatus(savedMap ? `Saved ${loadedGenre} map loaded` : `Genre - ${loadedGenre} loaded`)
@@ -1130,7 +1140,9 @@ export default function App() {
 
   const activeLevelBalance = useMemo(() => {
     if (!activeSection?.levelBalance) return null
-    if (activeMetric === 'vocalLevel') return activeSection.levelBalance.vocals
+    if (activeMetric === 'vocalLevel') {
+      return isMetricAvailable(activeSection.metrics.vocalLevel) ? activeSection.levelBalance.vocals : null
+    }
     return null
   }, [activeSection, activeMetric])
 
@@ -1157,7 +1169,7 @@ export default function App() {
   const rebuildSectionsFromBoundaries = (boundaries: number[], preferredSectionId?: string | null, dirty = true, autoSave = false) => {
     const buffer = audioBufferRef.current
     if (!buffer) return [] as SectionAnalysis[]
-    const nextSections = buildSections(buffer, boundaries, currentGenreProfile())
+    const nextSections = buildSections(buffer, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections))
     setSections(nextSections)
     setSectionMapDirty(dirty)
     setSectionMapStatus(dirty ? 'Manual section map edited - auto-saving...' : 'Saved section map loaded')
@@ -1242,6 +1254,20 @@ export default function App() {
     }
   }
 
+
+  const setActiveVocalOverride = (mode: VocalOverrideMode) => {
+    if (!audioBufferRef.current || !activeSection || activeSectionIndex < 0) return
+    const boundaries = boundariesFromSections(sections)
+    const overrides = vocalOverridesFromSections(sections)
+    overrides[activeSectionIndex] = mode
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), overrides)
+    setSections(nextSections)
+    setActiveSectionId(nextSections[activeSectionIndex]?.id ?? activeSection.id)
+    setSectionMapDirty(true)
+    setSectionMapStatus('Manual vocal mode edited - auto-saving...')
+    autoSaveSectionMap(nextSections)
+  }
+
   const saveSelectedSectionTiming = async () => {
     const timingApplied = applySelectedSectionTiming()
     if (!timingApplied || !trackIdentity || !audioBufferRef.current || !activeSection || activeSectionIndex < 0) return
@@ -1261,7 +1287,7 @@ export default function App() {
     if (activeSectionIndex > 0) boundaries[activeSectionIndex] = safeStart
     if (activeSectionIndex < sections.length - 1) boundaries[activeSectionIndex + 1] = safeEnd
 
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile())
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections))
     await saveCurrentSectionMap(nextSections)
   }
 
@@ -1293,7 +1319,7 @@ export default function App() {
         ? boundariesFromSections(sections)
         : undefined
 
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(nextGenre))
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(nextGenre), vocalOverridesFromSections(sections))
     const nextAutoSections = buildSections(audioBufferRef.current, undefined, currentGenreProfile(nextGenre))
     autoSectionsRef.current = nextAutoSections
 
@@ -1402,7 +1428,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.134</span>
+              <span className="version-pill">v0.164</span>
             </div>
           </div>
 
@@ -1632,6 +1658,7 @@ export default function App() {
                     {activeSectionIndex > 0 ? <button className="nav-button" onClick={() => activeSection && addSectionSplit(activeSection.id)}>Insert section</button> : null}
                   </div>
                 </div>
+
                 <div className="selected-actions">
                   <button
                     className="secondary-button"
@@ -1660,7 +1687,26 @@ export default function App() {
                       className={`metric-card clickable ${activeMetric === name ? 'active' : ''} ${isMetricAvailable(value) ? scoreTone(value) : 'standard'} ${!isMetricAvailable(value) ? 'metric-na' : ''}`}
                       onClick={() => setActiveMetric(name)}
                     >
-                      <span>{label}</span>
+                      <div className="metric-card-topline">
+                        <span>{label}</span>
+                        {name === 'vocalLevel' ? (
+                          <select
+                            className="vocal-override-card-select"
+                            aria-label="Vocal section mode"
+                            value={activeSection.vocalOverride ?? 'auto'}
+                            onClick={(event) => event.stopPropagation()}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onChange={(event) => {
+                              event.stopPropagation()
+                              setActiveVocalOverride(event.target.value as VocalOverrideMode)
+                            }}
+                          >
+                            <option value="auto">Auto</option>
+                            <option value="vocal">Vocal</option>
+                            <option value="instrumental">Instrumental</option>
+                          </select>
+                        ) : null}
+                      </div>
                       <strong>{metricDisplay(value)}</strong>
                       <div className="mini-bar"><div className={`mini-bar-fill tone-${isMetricAvailable(value) ? scoreTone(value) : 'standard'}`} style={{ width: `${isMetricAvailable(value) ? value : 0}%` }} /></div>
                     </button>
