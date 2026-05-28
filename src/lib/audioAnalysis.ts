@@ -1046,6 +1046,20 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     ? normaliseCustomBoundaries(customBoundaries, buffer.duration)
     : detectSectionBoundaries(buffer)
   const globalEnergy = averageAbs(channel, 0, channel.length)
+  const vocalScan = boundaries.slice(0, -1).map((start, index) => {
+    const sectionStart = Math.floor(start * sampleRate)
+    const sectionEnd = Math.floor(boundaries[index + 1] * sampleRate)
+    const full = rms(channel, sectionStart, sectionEnd)
+    const band = bandpassRms(channel, sampleRate, sectionStart, sectionEnd, 2400, 0.85)
+    return {
+      band,
+      full,
+      ratio: band / Math.max(0.0001, full),
+      energyVsSong: full / Math.max(0.0001, globalEnergy),
+    }
+  })
+  const strongestVocalBand = Math.max(0.0001, ...vocalScan.map((item) => item.band))
+  const strongestVocalRatio = Math.max(0.0001, ...vocalScan.map((item) => item.ratio))
   const sections: SectionAnalysis[] = []
 
   for (let i = 0; i < boundaries.length - 1; i += 1) {
@@ -1271,7 +1285,27 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const drumsVsEverything = scoreAroundTarget(drumLevelRatio, drumLevelTarget, 150, 40, 94)
     const vocalEnergyVsSong = vocalBand / Math.max(0.0001, globalEnergy)
     const sectionEnergyVsSong = fullRms / Math.max(0.0001, globalEnergy)
-    const hasVocalAnchor = vocalRatio >= 0.095 && vocalEnergyVsSong >= 0.58 && sectionEnergyVsSong >= 0.38
+    const vocalBandVsSongPeak = vocalBand / strongestVocalBand
+    const vocalRatioVsSongPeak = vocalRatio / strongestVocalRatio
+    // v0.134: The first N/A pass was too strict because it compared the vocal
+    // proxy to whole-song energy. In mastered commercial mixes the 2–4 kHz
+    // vocal band is often a modest slice of total RMS, so every section could
+    // fail. Use song-relative vocal anchors instead: a section counts as vocal
+    // when its vocal-band energy is close enough to the song's strongest vocal
+    // section and the section itself is not just a tiny fade/noise tail.
+    const hasVocalAnchor = Boolean(
+      (
+        vocalRatio >= 0.075
+        && vocalBandVsSongPeak >= 0.24
+        && vocalRatioVsSongPeak >= 0.42
+        && sectionEnergyVsSong >= 0.26
+      )
+      || (
+        vocalRatio >= 0.12
+        && vocalBandVsSongPeak >= 0.18
+        && sectionEnergyVsSong >= 0.20
+      ),
+    )
     const vocalLevel = hasVocalAnchor ? scoreVocalLevelFromRatio(rescuedVocalRatio, vocalTarget) : null
     const vocalBalanceItem = hasVocalAnchor
       ? makeLevelBalanceItem('vocals', 'Vocals', rescuedVocalRatio, vocalTarget)
