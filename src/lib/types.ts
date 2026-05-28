@@ -65,7 +65,7 @@ export interface SectionMetrics {
   tonalBalance: number
   width: number
   drumsVsEverything: number
-  vocalLevel: number
+  vocalLevel: number | null
 }
 
 export interface SectionAnalysis {

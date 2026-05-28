@@ -13,6 +13,18 @@ export type AnalysisGenreProfile = {
     core?: number
     air?: number
   }
+  density?: {
+    weight?: number
+    body?: number
+    core?: number
+    air?: number
+  }
+  densityWeights?: {
+    weight?: number
+    body?: number
+    core?: number
+    air?: number
+  }
   vocals?: number
   width?: {
     middle?: number
@@ -52,6 +64,29 @@ function weightedTonalDeviation(
   weights: Record<'weight' | 'body' | 'core' | 'air', number>,
 ) {
   return values.reduce((sum, item) => sum + item.value * weights[item.key], 0)
+}
+
+function getDensityWeights(genreProfile?: AnalysisGenreProfile) {
+  const raw = {
+    weight: genreProfile?.densityWeights?.weight ?? 0.24,
+    body: genreProfile?.densityWeights?.body ?? 0.34,
+    core: genreProfile?.densityWeights?.core ?? 0.28,
+    air: genreProfile?.densityWeights?.air ?? 0.14,
+  }
+
+  return normalizeTargets(raw)
+}
+
+function densityTargets(genreProfile?: AnalysisGenreProfile) {
+  // Reference-calibrated occupancy targets. These are intentionally not centred
+  // around a scooped low-mid profile: commercial references often carry Body
+  // density well to the right while still sounding finished.
+  return normalizeTargets({
+    weight: shiftedTarget(0.28, genreProfile?.density?.weight ?? 0),
+    body: shiftedTarget(0.27, genreProfile?.density?.body ?? 0),
+    core: shiftedTarget(0.31, genreProfile?.density?.core ?? 0),
+    air: shiftedTarget(0.14, genreProfile?.density?.air ?? 0),
+  })
 }
 
 function averageAbs(samples: Float32Array, start: number, end: number) {
@@ -578,22 +613,20 @@ function clarityScorePressure(band: BalanceStripItem) {
   return excess <= 0 ? 0 : 8 + excess * 1.15
 }
 
-function makeClarityBand(key: string, label: string, range: string, blurPercent: number, action: string): BalanceStripItem {
-  // v0.77: Commercial reference tracks often show a consistent right-leaning
-  // density profile in Weight/Body/Core even when they still sound clear and
-  // readable. Treat that baseline as normal musical density, not instant clash.
-  // v0.81: keep the dot/slider based on the real density amount, but show
-  // only the amount ABOVE the band’s healthy tolerance in the text label.
-  const densityOffset = key === 'body' ? 10 : key === 'core' ? 8 : key === 'weight' ? 8 : 0
-  const densityScale = key === 'air' ? 1 : key === 'body' ? 0.92 : 0.9
-  const adjustedBlur = Math.max(0, blurPercent - densityOffset) * densityScale
-  const goodLimit = clarityGoodLimit(key)
-  const actualRounded = Math.round(clamp(adjustedBlur, 0, 32))
-  const excessRounded = Math.round(clamp(Math.max(0, adjustedBlur - goodLimit), 0, 32))
-  const status: BalanceStripItem['status'] = excessRounded <= 0 ? 'good' : 'high'
+function makeClarityBand(key: string, label: string, range: string, share: number, target: number, actionLow: string, actionHigh: string): BalanceStripItem {
+  const rawDeviation = ((share - target) / Math.max(0.0001, target)) * 100
+  const deviationPercent = roundLevelDeviation(rawDeviation)
+  const abs = Math.abs(deviationPercent)
+  const healthyWindow = clarityGoodLimit(key)
+  const excessRounded = Math.round(clamp(Math.max(0, abs - healthyWindow), 0, 32))
+  const status: BalanceStripItem['status'] = excessRounded <= 0 ? 'good' : deviationPercent < 0 ? 'low' : 'high'
   const severity: BalanceStripItem['severity'] = excessRounded <= 0 ? 'good' : excessRounded <= 8 ? 'watch' : 'fix'
-  const finalAction = status === 'good' ? `${label} (${range}) is within its healthy density window. Protect it while fixing bigger clashes.` : action
-  return { key, label, range, deviationPercent: actualRounded, displayPercent: excessRounded, status, severity, action: finalAction }
+  const action = status === 'good'
+    ? `${label} (${range}) is within its reference-calibrated density zone. Protect it while fixing bigger clashes.`
+    : status === 'low'
+      ? actionLow
+      : actionHigh
+  return { key, label, range, deviationPercent, displayPercent: excessRounded, status, severity, action }
 }
 
 
@@ -777,6 +810,7 @@ function buildClarityBands(
   transientEnergy: number,
   fullRms: number,
   sectionContext?: { impact?: number; width?: number; tonalBalance?: number; coreStereoSeparation?: number },
+  genreProfile?: AnalysisGenreProfile,
 ): BalanceStripItem[] {
   const weight = bandpassRms(samples, sampleRate, startIndex, endIndex, 70, 0.75)
   const body = bandpassRms(samples, sampleRate, startIndex, endIndex, 220, 0.85)
@@ -865,11 +899,19 @@ function buildClarityBands(
       ? Math.max(twoZoneCoreClash, broadCoreClash * 0.72)
       : Math.max(sortedCoreClashes[0], broadCoreClash)) * coreDensityTolerance
 
+  const targets = densityTargets(genreProfile)
+  const densityShare = {
+    weight: weightShare,
+    body: bodyShare,
+    core: coreShare + (coreClash / 100) * 0.035,
+    air: airShare,
+  }
+
   return [
-    makeClarityBand('weight', 'Weight', '20–120 Hz', clash(weightShare, 0.28, smearPenalty * 0.45, 0.68), 'Separate kick and bass first: try sidechain or cut one small pocket around 60–100 Hz.'),
-    makeClarityBand('body', 'Body', '120–350 Hz', clash(bodyShare, 0.21, smearPenalty * 0.85, bodySensitivity), 'Low-mid blur. Cut 150–300 Hz about -1 to -2 dB on guitars, pads, or reverb returns.'),
-    makeClarityBand('core', 'Core', '350 Hz–2 kHz', coreClash, 'Core density. If vocals/guitars are masked, pull busy synths back about -1 dB or cut a small pocket around 500 Hz–1 kHz.'),
-    makeClarityBand('air', 'Air', '5–12 kHz', clash(airShare, 0.16, 0, 1.05) * airTolerance, 'Bright density. If it feels fizzy or masks cymbal/vocal air, ease 6–10 kHz by about -1 dB.'),
+    makeClarityBand('weight', 'Weight', '20–120 Hz', densityShare.weight, targets.weight, 'Weight is lean for this reference profile. Add bass/kick support before cutting low-mids.', 'Separate kick and bass first: try sidechain or cut one small pocket around 60–100 Hz.'),
+    makeClarityBand('body', 'Body', '120–350 Hz', densityShare.body, targets.body, 'Body is lean against commercial references. Add warmth with guitars, pads, bass harmonics, or a gentle 180–300 Hz lift.', 'Low-mid accumulation is above this reference zone. Check guitars, pads, bass harmonics, and reverb returns before cutting the mix bus.'),
+    makeClarityBand('core', 'Core', '350 Hz–2 kHz', densityShare.core, targets.core, 'Core feels underfilled. Add musical midrange support before pushing air or sub.', 'Core density. If vocals/guitars are masked, pull busy synths back about -1 dB or cut a small pocket around 500 Hz–1 kHz.'),
+    makeClarityBand('air', 'Air', '5–12 kHz', densityShare.air, targets.air, 'Air is dark for this profile. Add cymbal/vocal sheen or a gentle 8–12 kHz lift.', 'Bright density. If it feels fizzy or masks cymbal/vocal air, ease 6–10 kHz by about -1 dB.'),
   ]
 }
 
@@ -887,7 +929,7 @@ function primaryClarityRecommendation(bands: BalanceStripItem[], clarity: number
 
   return {
     title: biggest.action,
-    detail: `${biggest.label} (${biggest.range}) shows ${Math.abs(biggest.deviationPercent)}% over desired density. Check whether it is musical first, then re-score before chasing smaller density tweaks.`,
+    detail: `${biggest.label} (${biggest.range}) is ${Math.abs(biggest.displayPercent ?? biggest.deviationPercent)}% outside the reference-calibrated density zone. Check whether it is musical first, then re-score before chasing smaller density tweaks.`,
     priority: biggest.severity === 'fix' || clarity < 70 ? 'High impact' : 'Worth exploring',
     estimatedLift: biggest.severity === 'fix' || clarity < 70 ? '+4 to +9 density' : '+2 to +5 density',
     target: 'Instruments',
@@ -952,11 +994,13 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
       meaning: 'Whether the vocal level feels anchored against the rest of the mix.',
       influencedBy: 'Vocal fader level, automation, compression, 1–4 kHz presence, masking from guitars/synths, and how dense the section is.',
       currentRead:
-        metrics.vocalLevel >= 82
-          ? 'The vocal range is sitting confidently here. This is a good anchor for the rest of the mix.'
-          : metrics.vocalLevel >= 70
-            ? 'The vocal range is close, but a small level or presence move could make this section feel more finished.'
-            : 'The vocal may not be owning its space yet. A small fader move or clearing 2–4 kHz in the instruments could be the quick win.',
+        metrics.vocalLevel == null
+          ? 'No obvious vocal anchor was detected in this section, so the vocal score is marked N/A and excluded from the section percentage.'
+          : metrics.vocalLevel >= 82
+            ? 'The vocal range is sitting confidently here. This is a good anchor for the rest of the mix.'
+            : metrics.vocalLevel >= 70
+              ? 'The vocal range is close, but a small level or presence move could make this section feel more finished.'
+              : 'The vocal may not be owning its space yet. A small fader move or clearing 2–4 kHz in the instruments could be the quick win.',
     },
     width: {
       title: 'Width - How wide and immersive does the stereo image feel?',
@@ -1085,7 +1129,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
         + estimateBandStereoSeparation(buffer, sampleRate, startIndex, endIndex, 1650, 0.85)
       ) / 3
       : 0
-    const clarityBands = buildClarityBands(channel, sampleRate, startIndex, endIndex, transientEnergy, fullRms, { impact, width, tonalBalance, coreStereoSeparation })
+    const clarityBands = buildClarityBands(channel, sampleRate, startIndex, endIndex, transientEnergy, fullRms, { impact, width, tonalBalance, coreStereoSeparation }, genreProfile)
     const clarityPressureValues = clarityBands.map((band) => clarityScorePressure(band))
     const clarityWorst = Math.max(...clarityPressureValues)
     const clarityWatchCount = clarityBands.filter((band) => band.severity !== 'good').length
@@ -1225,19 +1269,33 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       : (vocalRatio * (1 - rescueAmount)) + (bestVocalAnchorRatio * rescueAmount)
 
     const drumsVsEverything = scoreAroundTarget(drumLevelRatio, drumLevelTarget, 150, 40, 94)
-    const vocalLevel = scoreVocalLevelFromRatio(rescuedVocalRatio, vocalTarget)
+    const vocalEnergyVsSong = vocalBand / Math.max(0.0001, globalEnergy)
+    const sectionEnergyVsSong = fullRms / Math.max(0.0001, globalEnergy)
+    const hasVocalAnchor = vocalRatio >= 0.095 && vocalEnergyVsSong >= 0.58 && sectionEnergyVsSong >= 0.38
+    const vocalLevel = hasVocalAnchor ? scoreVocalLevelFromRatio(rescuedVocalRatio, vocalTarget) : null
+    const vocalBalanceItem = hasVocalAnchor
+      ? makeLevelBalanceItem('vocals', 'Vocals', rescuedVocalRatio, vocalTarget)
+      : {
+          key: 'vocals',
+          label: 'Vocals',
+          range: 'No vocal detected',
+          deviationPercent: 0,
+          displayPercent: 0,
+          status: 'good' as const,
+          severity: 'good' as const,
+          action: 'No obvious vocal anchor was detected here, so this section is excluded from vocal scoring.',
+        }
     const levelBalance = {
       drums: makeLevelBalanceItem('drums', 'Drums', drumLevelRatio, drumLevelTarget),
       kick: makeLevelBalanceItem('kick', 'Kick', kickProxy, 0.26),
       snare: makeLevelBalanceItem('snare', 'Snare', snareProxy, 0.22),
       cymbals: makeLevelBalanceItem('cymbals', 'Cymbals', snapEnergy / Math.max(0.0001, snapEnergy + vocalBand + midBody + lowPunch), 0.24),
-      vocals: makeLevelBalanceItem('vocals', 'Vocals', rescuedVocalRatio, vocalTarget),
+      vocals: vocalBalanceItem,
     }
     const metrics = { clarity, impact, tonalBalance, width, drumsVsEverything, vocalLevel }
-    // Match the overall section score to the cards currently shown in the UI.
-    // Drums was removed as a visible scorecard, so including it here made the
-    // displayed section % feel inconsistent with the five card values users see.
-    const visibleCardScores = [clarity, impact, tonalBalance, vocalLevel, width]
+    // Match the section score to visible cards, but skip Vocal when a section
+    // is likely an intro, outro, instrumental, or breakdown with no vocal anchor.
+    const visibleCardScores = [clarity, impact, tonalBalance, width, ...(vocalLevel == null ? [] : [vocalLevel])]
     const score = Math.round(visibleCardScores.reduce((sum, value) => sum + Math.round(value), 0) / visibleCardScores.length)
 
     const strengths = [
