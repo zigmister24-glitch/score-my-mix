@@ -1,4 +1,4 @@
-import { BalanceStripItem, ImpactStrip, Recommendation, SectionAnalysis, SectionMetrics, TonalBalanceBand } from './types'
+import { BalanceStripItem, ImpactStrip, Recommendation, SectionAnalysis, SectionMetrics, TonalBalanceBand, MasteringMetrics, MasteringMode } from './types'
 
 export type AnalysisGenreProfile = {
   tonal?: {
@@ -114,6 +114,300 @@ function rms(samples: Float32Array, start: number, end: number) {
     sum += sample * sample
   }
   return Math.sqrt(sum / count)
+}
+
+
+function dbFromAmplitude(value: number) {
+  return 20 * Math.log10(Math.max(0.000001, value))
+}
+
+function dbFromPower(value: number) {
+  return 10 * Math.log10(Math.max(0.000000000001, value))
+}
+
+function sectionMeanSquare(buffer: AudioBuffer, start: number, end: number) {
+  let sum = 0
+  let count = 0
+  const channelCount = Math.max(1, buffer.numberOfChannels)
+  for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+    const samples = buffer.getChannelData(channelIndex)
+    for (let i = start; i < end; i += 1) {
+      const sample = samples[i] ?? 0
+      sum += sample * sample
+      count += 1
+    }
+  }
+  return sum / Math.max(1, count)
+}
+
+function estimateSectionTruePeak(buffer: AudioBuffer, start: number, end: number) {
+  let peak = 0
+  const channelCount = Math.max(1, buffer.numberOfChannels)
+  for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+    const samples = buffer.getChannelData(channelIndex)
+    const safeEnd = Math.min(end, samples.length - 1)
+    for (let i = Math.max(0, start); i <= safeEnd; i += 1) {
+      const current = samples[i] ?? 0
+      const next = samples[Math.min(samples.length - 1, i + 1)] ?? current
+      peak = Math.max(peak, Math.abs(current))
+      // Lightweight 4x linear oversample approximation. It is not a laboratory
+      // BS.1770 true-peak meter, but it catches the section-level hot spots well
+      // enough for Mix Assistant guidance without adding heavy DSP dependencies.
+      for (let step = 1; step < 4; step += 1) {
+        const t = step / 4
+        const interpolated = current + ((next - current) * t)
+        peak = Math.max(peak, Math.abs(interpolated))
+      }
+    }
+  }
+  return dbFromAmplitude(peak)
+}
+
+function estimateTrackTruePeak(buffer: AudioBuffer) {
+  return estimateSectionTruePeak(buffer, 0, buffer.length)
+}
+
+function masteringCalibrationGain(buffer: AudioBuffer) {
+  // Stable v0.181 mastering path: use a whole-track decode-scale correction only
+  // when the browser has clearly decoded the file far below normal full-scale.
+  // This avoids the Mars/sock-drawer readings from the experimental LUFS path,
+  // while preserving PSR because the same gain is applied to loudness and peak.
+  const trackPeakDb = estimateTrackTruePeak(buffer)
+  const trackLufsEstimate = -0.691 + dbFromPower(sectionMeanSquare(buffer, 0, buffer.length))
+
+  const looksDecodeScaled = trackPeakDb < -6 || trackLufsEstimate < -18
+  if (!looksDecodeScaled) return 0
+
+  const loudnessGain = -9.5 - trackLufsEstimate
+  const peakGain = -0.8 - trackPeakDb
+  return clamp(Math.max(loudnessGain, peakGain, 0), 0, 24)
+}
+
+type KWeightedCache = {
+  sampleRate: number
+  channels: Float32Array[]
+}
+
+const kWeightedCache = new WeakMap<AudioBuffer, KWeightedCache>()
+
+function applyBiquad(samples: Float32Array, b0: number, b1: number, b2: number, a1: number, a2: number) {
+  const out = new Float32Array(samples.length)
+  let x1 = 0
+  let x2 = 0
+  let y1 = 0
+  let y2 = 0
+  for (let i = 0; i < samples.length; i += 1) {
+    const x0 = samples[i] ?? 0
+    const y0 = (b0 * x0) + (b1 * x1) + (b2 * x2) - (a1 * y1) - (a2 * y2)
+    out[i] = y0
+    x2 = x1
+    x1 = x0
+    y2 = y1
+    y1 = y0
+  }
+  return out
+}
+
+function getKWeightedChannels(buffer: AudioBuffer) {
+  const cached = kWeightedCache.get(buffer)
+  if (cached) return cached.channels
+
+  // BS.1770-style K-weighting approximation. These are the standard 48 kHz
+  // coefficients used by many lightweight LUFS implementations. They are close
+  // enough for section guidance and vastly better than raw RMS pretending to be
+  // LUFS. Most Mix Assistant exports are 48 kHz; non-48 kHz material still lands
+  // in the right ballpark for comparison rather than falling into the sock drawer.
+  const preB = [1.53512485958697, -2.69169618940638, 1.19839281085285]
+  const preA = [-1.69065929318241, 0.73248077421585]
+  const hpB = [1, -2, 1]
+  const hpA = [-1.99004745483398, 0.99007225036621]
+
+  const channels: Float32Array[] = []
+  const channelCount = Math.max(1, buffer.numberOfChannels)
+  for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+    const input = buffer.getChannelData(channelIndex)
+    const pre = applyBiquad(input, preB[0], preB[1], preB[2], preA[0], preA[1])
+    const weighted = applyBiquad(pre, hpB[0], hpB[1], hpB[2], hpA[0], hpA[1])
+    channels.push(weighted)
+  }
+
+  kWeightedCache.set(buffer, { sampleRate: buffer.sampleRate, channels })
+  return channels
+}
+
+function blockPower(channels: Float32Array[], start: number, end: number) {
+  let sum = 0
+  let count = 0
+  for (const samples of channels) {
+    const safeEnd = Math.min(end, samples.length)
+    for (let i = Math.max(0, start); i < safeEnd; i += 1) {
+      const sample = samples[i] ?? 0
+      sum += sample * sample
+      count += 1
+    }
+  }
+  return sum / Math.max(1, count)
+}
+
+function estimateSectionLufs(buffer: AudioBuffer, start: number, end: number) {
+  const channels = getKWeightedChannels(buffer)
+  const sectionStart = clamp(start, 0, buffer.length - 1)
+  const sectionEnd = clamp(end, sectionStart + 1, buffer.length)
+  const sectionLength = sectionEnd - sectionStart
+  const blockSize = Math.max(1024, Math.round(buffer.sampleRate * 0.4))
+  const hopSize = Math.max(256, Math.round(blockSize * 0.25))
+  const powers: number[] = []
+
+  if (sectionLength <= blockSize) {
+    powers.push(blockPower(channels, sectionStart, sectionEnd))
+  } else {
+    for (let windowStart = sectionStart; windowStart + Math.round(blockSize * 0.5) < sectionEnd; windowStart += hopSize) {
+      const windowEnd = Math.min(sectionEnd, windowStart + blockSize)
+      powers.push(blockPower(channels, windowStart, windowEnd))
+      if (windowEnd >= sectionEnd) break
+    }
+  }
+
+  const absoluteGated = powers.filter((power) => -0.691 + dbFromPower(power) > -70)
+  if (!absoluteGated.length) return -96
+
+  const preliminaryPower = absoluteGated.reduce((sum, power) => sum + power, 0) / absoluteGated.length
+  const relativeGate = (-0.691 + dbFromPower(preliminaryPower)) - 10
+  const relativeGated = absoluteGated.filter((power) => -0.691 + dbFromPower(power) > relativeGate)
+  const finalPowers = relativeGated.length ? relativeGated : absoluteGated
+  const finalPower = finalPowers.reduce((sum, power) => sum + power, 0) / finalPowers.length
+  return -0.691 + dbFromPower(finalPower)
+}
+
+function estimateRawSectionLoudness(buffer: AudioBuffer, start: number, end: number) {
+  return -0.691 + dbFromPower(sectionMeanSquare(buffer, start, end))
+}
+
+function estimateActiveRawSectionLoudness(buffer: AudioBuffer, start: number, end: number) {
+  const sectionStart = clamp(start, 0, buffer.length - 1)
+  const sectionEnd = clamp(end, sectionStart + 1, buffer.length)
+  const blockSize = Math.max(1024, Math.round(buffer.sampleRate * 0.4))
+  const hopSize = Math.max(256, Math.round(blockSize * 0.25))
+  const powers: number[] = []
+
+  if (sectionEnd - sectionStart <= blockSize) {
+    powers.push(sectionMeanSquare(buffer, sectionStart, sectionEnd))
+  } else {
+    for (let windowStart = sectionStart; windowStart + Math.round(blockSize * 0.5) < sectionEnd; windowStart += hopSize) {
+      const windowEnd = Math.min(sectionEnd, windowStart + blockSize)
+      powers.push(sectionMeanSquare(buffer, windowStart, windowEnd))
+      if (windowEnd >= sectionEnd) break
+    }
+  }
+
+  if (!powers.length) return estimateRawSectionLoudness(buffer, start, end)
+  const sorted = powers.filter((power) => power > 0).sort((a, b) => a - b)
+  if (!sorted.length) return -96
+  // A section read should behave closer to a short-term loudness meter than a
+  // whole-section average. Keep the loudest musical body of the section, but do
+  // not run the heavy LUFS scan that previously locked the browser.
+  const keepFrom = Math.floor(sorted.length * 0.55)
+  const active = sorted.slice(keepFrom)
+  const activePower = active.reduce((sum, power) => sum + power, 0) / Math.max(1, active.length)
+  return -0.691 + dbFromPower(activePower)
+}
+
+function estimateMasteringMetrics(buffer: AudioBuffer, start: number, end: number, calibrationGain = 0): MasteringMetrics {
+  const meanSquare = sectionMeanSquare(buffer, start, end)
+  // v0.181: rollback to the stable fast section read. This is a practical
+  // LUFS-style display value, not full EBU R128, but it behaves consistently in
+  // the browser and avoids the -120 LUFS / -110 dBTP failure mode.
+  let integratedLufs = -0.691 + dbFromPower(meanSquare) + calibrationGain
+  let truePeakDb = estimateSectionTruePeak(buffer, start, end) + calibrationGain
+
+  const preRescuePsr = truePeakDb - integratedLufs
+  const looksLikeSockDrawerSection = integratedLufs < -18 && truePeakDb < -6 && preRescuePsr >= 5 && preRescuePsr <= 16
+  if (looksLikeSockDrawerSection) {
+    const rescueGain = clamp(-0.8 - truePeakDb, 0, 18)
+    integratedLufs += rescueGain
+    truePeakDb += rescueGain
+  }
+
+  const psr = truePeakDb - integratedLufs
+  return { integratedLufs, truePeakDb, psr }
+}
+
+
+
+function masteringModeLabel(mode: MasteringMode) {
+  if (mode === 'full') return 'Full section'
+  if (mode === 'build') return 'Build / verse'
+  if (mode === 'breakdown') return 'Breakdown'
+  if (mode === 'outro') return 'Outro / quiet'
+  return 'Auto section role'
+}
+
+function loudnessTargetForSection(globalTarget: number, mode: MasteringMode, index: number, total: number, impact: number) {
+  const resolvedMode: MasteringMode = mode === 'auto'
+    ? (index === total - 1 ? 'outro' : index === 0 ? 'build' : impact >= 88 ? 'full' : 'build')
+    : mode
+
+  const offset = resolvedMode === 'full'
+    ? 0
+    : resolvedMode === 'build'
+      ? -3
+      : resolvedMode === 'breakdown'
+        ? -6
+        : -8
+
+  return {
+    mode: resolvedMode,
+    target: globalTarget + offset,
+    label: masteringModeLabel(resolvedMode),
+  }
+}
+
+function scoreMasteringDb(value: number, target: number, goodWindow: number, outerWindow: number, cap = 96) {
+  const delta = Math.abs(value - target)
+  if (delta <= goodWindow) return Math.round(clamp(90 + ((goodWindow - delta) / Math.max(0.0001, goodWindow)) * 8, 0, 100))
+  return Math.round(clamp(cap - ((delta - goodWindow) / Math.max(0.0001, outerWindow - goodWindow)) * 46, 35, cap))
+}
+
+function scoreLoudness(integratedLufs: number, target: number) {
+  if (integratedLufs >= target) return 100
+  const gap = target - integratedLufs
+  // Section loudness needs to be forgiving: intros, breakdowns and fades can be
+  // deliberately quieter while the whole track is still release-ready.
+  return Math.round(clamp(100 - (gap * 2.2), 65, 100))
+}
+
+function scoreTruePeak(truePeakDb: number) {
+  // True Peak is primarily a ceiling/safety check. Being lower than the ceiling
+  // is safe; loudness already tells us whether the section has enough level.
+  if (truePeakDb > 0) return 35
+  if (truePeakDb > -0.1) return 52
+  if (truePeakDb > -0.3) return 72
+  if (truePeakDb > -0.8) return 90
+  return 100
+}
+
+function scorePsr(psr: number) {
+  if (psr >= 8 && psr <= 12) return Math.round(92 + (1 - Math.abs(psr - 10) / 2) * 6)
+  if (psr < 8) return Math.round(clamp(92 - ((8 - psr) * 11), 35, 92))
+  return Math.round(clamp(92 - ((psr - 12) * 4.5), 55, 92))
+}
+
+function makeMasteringBand(key: 'loudness' | 'truePeak' | 'punch', label: string, value: number, target: number, score: number, readout: string, context = ''): BalanceStripItem {
+  const rawDeviation = key === 'truePeak'
+    ? (value > target ? ((value - target) / 0.7) * 18 : 0)
+    : key === 'punch'
+      ? ((value - target) / 2.5) * 18
+      : (value >= target ? 10 : -Math.min(28, (target - value) * 1.4))
+  const deviationPercent = Math.round(clamp(rawDeviation, -28, 28))
+  const abs = Math.abs(deviationPercent)
+  const status: BalanceStripItem['status'] = score >= 88 ? 'good' : deviationPercent < 0 ? 'low' : 'high'
+  const severity: BalanceStripItem['severity'] = score >= 88 ? 'good' : score >= 74 ? 'watch' : 'fix'
+  const action = key === 'loudness'
+    ? `Integrated section loudness. Target here: ${target.toFixed(1)} LUFS${context ? ` (${context})` : ''}. Reaching the target scores as ready; quieter sections are judged against the intended section role.`
+    : key === 'truePeak'
+      ? 'Estimated true peak safety. Lower is safe; only peaks near or above the ceiling are flagged.'
+      : 'PSR/punch. Shows whether the section still has dynamic life after compression and limiting.'
+  return { key, label, range: readout, deviationPercent, displayPercent: Math.max(0, 100 - score), status, severity, action }
 }
 
 function median(values: number[]) {
@@ -980,7 +1274,7 @@ function primaryClarityRecommendation(bands: BalanceStripItem[], clarity: number
   }
 }
 
-function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommendation[], isIntro = false) {
+function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommendation[], isIntro = false, mastering?: MasteringMetrics) {
   const dominantRecommendation = recommendations[0]
   return {
     clarity: {
@@ -1057,6 +1351,14 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
             ? 'The stereo space is working, but the section may benefit from either stronger centre anchoring or more obvious width movement.'
             : 'The stereo image may be too static, too narrow, or losing centre confidence. Use width as contrast rather than making everything wide all the time.',
     },
+    mastering: {
+      title: 'Mastering - Is this section release-ready without being crushed?',
+      meaning: 'A combined delivery read based on section loudness, estimated true peak safety, and PSR/punch. It is a technical readiness card, not a replacement for the creative mix cards.',
+      influencedBy: 'Limiter drive, clipper ceiling, bus compression, low-end sustain, transient punch, saturation, and how hard the section is being pushed.',
+      currentRead: mastering
+        ? `${mastering.integratedLufs.toFixed(1)} LUFS, ${mastering.truePeakDb.toFixed(2)} dBTP, PSR ${mastering.psr.toFixed(1)} dB. ${metrics.mastering >= 88 ? 'This section looks release-ready technically.' : metrics.mastering >= 75 ? 'This section is close, but one delivery value is worth checking.' : 'This section may be too quiet, too hot, or dynamically flattened.'}`
+        : 'Mastering readout unavailable for this section.',
+    },
   }
 }
 
@@ -1083,13 +1385,14 @@ function normaliseCustomBoundaries(boundaries: number[], duration: number) {
   return result.length >= 2 ? result : [0, duration]
 }
 
-export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile, vocalOverrides: VocalOverrideMode[] = []): SectionAnalysis[] {
+export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile, vocalOverrides: VocalOverrideMode[] = [], masteringModes: MasteringMode[] = [], masteringTarget = -9.5): SectionAnalysis[] {
   const channel = buffer.getChannelData(0)
   const sampleRate = buffer.sampleRate
   const boundaries = customBoundaries?.length
     ? normaliseCustomBoundaries(customBoundaries, buffer.duration)
     : detectSectionBoundaries(buffer)
   const globalEnergy = averageAbs(channel, 0, channel.length)
+  const masteringGain = masteringCalibrationGain(buffer)
   const vocalScan = boundaries.slice(0, -1).map((start, index) => {
     const sectionStart = Math.floor(start * sampleRate)
     const sectionEnd = Math.floor(boundaries[index + 1] * sampleRate)
@@ -1821,6 +2124,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     )
 
     const vocalOverride = vocalOverrides[i] ?? 'auto'
+    const masteringMode = masteringModes[i] ?? 'auto'
     const forcedVocalLevel = scoreVocalLevelFromRatio(finalJudgedVocalRatio, vocalJudgementTarget)
     const autoVocalAnchor = Boolean(
       provisionalVocalLevel != null
@@ -1851,6 +2155,20 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
         ? true
         : autoVocalAnchor
     const vocalLevel = hasVocalAnchor ? (vocalOverride === 'vocal' ? forcedVocalLevel : provisionalVocalLevel) : null
+
+    const mastering = estimateMasteringMetrics(buffer, startIndex, endIndex, masteringGain)
+    const loudnessRole = loudnessTargetForSection(masteringTarget, masteringMode, i, boundaries.length - 1, impact)
+    const loudnessTarget = loudnessRole.target
+    const loudness = scoreLoudness(mastering.integratedLufs, loudnessTarget)
+    const truePeak = scoreTruePeak(mastering.truePeakDb)
+    const punch = scorePsr(mastering.psr)
+    const masteringScore = Math.round((loudness * 0.42) + (truePeak * 0.25) + (punch * 0.33))
+    const masteringBands = [
+      makeMasteringBand('loudness', 'Loudness', mastering.integratedLufs, loudnessTarget, loudness, `${mastering.integratedLufs.toFixed(1)} LUFS`, loudnessRole.label),
+      makeMasteringBand('truePeak', 'True Peak', mastering.truePeakDb, -0.8, truePeak, `${mastering.truePeakDb.toFixed(2)} dBTP`),
+      makeMasteringBand('punch', 'Punch', mastering.psr, 10, punch, `PSR ${mastering.psr.toFixed(1)} dB`),
+    ]
+
     const vocalBalanceItem = hasVocalAnchor
       ? makeLevelBalanceItem('vocals', 'Vocals', finalJudgedVocalRatio, vocalJudgementTarget)
       : {
@@ -1870,10 +2188,10 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       cymbals: makeLevelBalanceItem('cymbals', 'Cymbals', snapEnergy / Math.max(0.0001, snapEnergy + vocalBand + midBody + lowPunch), 0.24),
       vocals: vocalBalanceItem,
     }
-    const metrics = { clarity, impact, tonalBalance, width, drumsVsEverything, vocalLevel }
+    const metrics = { clarity, impact, tonalBalance, width, drumsVsEverything, vocalLevel, mastering: masteringScore }
     // Match the section score to visible cards, but skip Vocal when a section
     // is likely an intro, outro, instrumental, or breakdown with no vocal anchor.
-    const visibleCardScores = [clarity, impact, tonalBalance, width, ...(vocalLevel == null ? [] : [vocalLevel])]
+    const visibleCardScores = [clarity, impact, tonalBalance, width, masteringScore, ...(vocalLevel == null ? [] : [vocalLevel])]
     const score = Math.round(visibleCardScores.reduce((sum, value) => sum + Math.round(value), 0) / visibleCardScores.length)
 
     const strengths = [
@@ -2034,12 +2352,14 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       recommendations,
       metrics,
       vocalOverride,
-      metricInsights: buildMetricInsights(metrics, recommendations, i === 0),
+      metricInsights: buildMetricInsights(metrics, recommendations, i === 0, mastering),
       tonalBalanceBands,
       clarityBands,
       levelBalance,
       impactStrip,
       widthBands,
+      mastering,
+      masteringBands,
     })
   }
 

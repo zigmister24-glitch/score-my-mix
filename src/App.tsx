@@ -1,7 +1,7 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import WaveformPanel, { WaveformHandle } from './components/WaveformPanel'
 import { AnalysisGenreProfile, buildSections, decodeAudioFile, formatTime } from './lib/audioAnalysis'
-import { SectionAnalysis, VocalOverrideMode } from './lib/types'
+import { SectionAnalysis, VocalOverrideMode, MasteringMode } from './lib/types'
 
 declare global {
   interface Window {
@@ -60,6 +60,14 @@ The engine compares vocal energy against the surrounding mix and nearby vocal se
 
 To improve this:
 Balance vocal level consistency, automate phrases, reduce masking around vocals, and avoid sudden jumps or buried sections.`
+    case 'mastering':
+      return `Mastering checks whether the section is technically release-ready without crushing the life out of it.
+
+How it works:
+The engine estimates LUFS, true peak, and PSR/punch, then combines them into one section-level delivery score.
+
+To improve this:
+Adjust limiter drive, clipper/ceiling, bus compression, low-end sustain, and transient control section by section.`
     case 'impact':
       return `Impact measures energy lift, punch, and emotional momentum.
 
@@ -97,7 +105,7 @@ const GENRE_PROFILES = {
 
 type GenreProfileName = keyof typeof GENRE_PROFILES
 
-const METRIC_ORDER: Array<keyof SectionAnalysis['metrics']> = ['clarity', 'impact', 'tonalBalance', 'vocalLevel', 'width']
+const METRIC_ORDER: Array<keyof SectionAnalysis['metrics']> = ['clarity', 'impact', 'tonalBalance', 'vocalLevel', 'width', 'mastering']
 
 type LeaderboardEntry = {
   id: string
@@ -125,13 +133,17 @@ type SavedSectionMapItem = {
   end: number
   label?: string
   vocalOverride?: VocalOverrideMode
+  masteringMode?: MasteringMode
 }
 
 type SavedSectionMap = {
   sections: SavedSectionMapItem[]
   source?: string
   genre?: GenreProfileName
+  masteringTarget?: number
 }
+
+type MasteringTargetPreset = '-14' | '-11' | '-9.5' | '-8' | '-7'
 
 function stripExtension(name: string) {
   return name.replace(/\.[^.]+$/, '')
@@ -422,7 +434,7 @@ async function readSectionMap(track: TrackIdentityState, sectionGenre?: GenrePro
   }
 }
 
-async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalysis[], sectionGenre?: GenreProfileName) {
+async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalysis[], sectionGenre?: GenreProfileName, masteringTarget?: number) {
   if (IS_LOCAL_DEV) return { ok: true, local: true }
 
   const payload = {
@@ -432,6 +444,7 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
     display_name: track.displayName,
     duration_seconds: track.durationSeconds,
     genre: track.durationSeconds >= 60 ? sectionGenre : undefined,
+    masteringTarget,
     sections: sections.map((section, index) => {
       const isLastSection = index === sections.length - 1
       const savedEnd = isLastSection
@@ -443,6 +456,7 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
         end: Number(savedEnd.toFixed(3)),
         label: section.label,
         vocalOverride: section.vocalOverride ?? 'auto',
+        masteringMode: section.masteringMode ?? 'auto',
       }
     }),
   }
@@ -559,6 +573,18 @@ function vocalOverridesFromSavedMap(map: SavedSectionMap | null): VocalOverrideM
   return map?.sections?.map((section) => section.vocalOverride ?? 'auto') ?? []
 }
 
+function masteringModesFromSections(sections: SectionAnalysis[]): MasteringMode[] {
+  return sections.map((section) => section.masteringMode ?? 'auto')
+}
+
+function masteringModesFromSavedMap(map: SavedSectionMap | null): MasteringMode[] {
+  return map?.sections?.map((section) => section.masteringMode ?? 'auto') ?? []
+}
+
+function masteringTargetValue(preset: MasteringTargetPreset) {
+  return Number(preset)
+}
+
 async function readLeaderboard(): Promise<{
   allTime: LeaderboardEntry[]
   hotStreak: LeaderboardEntry[]
@@ -637,6 +663,7 @@ function metricLabel(name: keyof SectionAnalysis['metrics']) {
   if (name === 'tonalBalance') return 'Tonal Balance'
   if (name === 'drumsVsEverything') return 'Drums'
   if (name === 'vocalLevel') return 'Vocals'
+  if (name === 'mastering') return 'Mastering'
   return name.charAt(0).toUpperCase() + name.slice(1)
 }
 
@@ -786,6 +813,7 @@ export default function App() {
   const [leaderboardLast30, setLeaderboardLast30] = useState<LeaderboardEntry[]>([])
   const [leaderboardMessage, setLeaderboardMessage] = useState('')
   const [selectedGenre, setSelectedGenre] = useState<GenreProfileName>('Modern Pop')
+  const [selectedMasteringTarget, setSelectedMasteringTarget] = useState<MasteringTargetPreset>('-9.5')
   const [leaderboardLoading, setLeaderboardLoading] = useState(true)
   const analysisRef = useRef<HTMLElement | null>(null)
   const waveformApiRef = useRef<WaveformHandle | null>(null)
@@ -884,7 +912,7 @@ export default function App() {
       const buffer = await decodeAudioFile(file)
       audioBufferRef.current = buffer
       setHasAudioBuffer(true)
-      const autoSections = buildSections(buffer, undefined, currentGenreProfile())
+      const autoSections = buildSections(buffer, undefined, currentGenreProfile(), [], [], masteringTargetValue(selectedMasteringTarget))
       autoSectionsRef.current = autoSections
       const identity = await inferTrackIdentity(file)
       const durationSeconds = Math.round(buffer.duration || 0)
@@ -920,9 +948,9 @@ export default function App() {
 
       setSelectedGenre(loadedGenre)
       const nextSections = savedMap
-        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration), currentGenreProfile(loadedGenre), vocalOverridesFromSavedMap(savedMap))
-        : buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
-      autoSectionsRef.current = buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
+        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration), currentGenreProfile(loadedGenre), vocalOverridesFromSavedMap(savedMap), masteringModesFromSavedMap(savedMap), masteringTargetValue(selectedMasteringTarget))
+        : buildSections(buffer, undefined, currentGenreProfile(loadedGenre), [], [], masteringTargetValue(selectedMasteringTarget))
+      autoSectionsRef.current = buildSections(buffer, undefined, currentGenreProfile(loadedGenre), [], [], masteringTargetValue(selectedMasteringTarget))
       setSectionMapStatus(savedMap ? `Saved ${loadedGenre} map loaded` : `Genre - ${loadedGenre} loaded`)
       setSectionMapDirty(false)
 
@@ -1075,11 +1103,13 @@ export default function App() {
     drumsVsEverything: ['Drums', 'Drum balance'],
     vocalLevel: ['Vocal', 'Vocal level'],
     width: ['Stereo field'],
+    mastering: ['Master delivery', 'Loudness', 'True Peak', 'Peak level', 'Limiter', 'Punch', 'PSR', 'Dynamics', 'Overall mix', 'Mix bus'],
   }
 
   const metricRecommendations = useMemo(() => {
     if (!activeSection) return []
     const targets = recommendationTargetsByMetric[activeMetric]
+    if (!targets?.length) return []
     return activeSection.recommendations.filter((recommendation) => targets.includes(recommendation.target))
   }, [activeSection, activeMetric])
 
@@ -1112,6 +1142,7 @@ export default function App() {
   }, [activeSection])
 
   const activeTonalBands = useMemo(() => activeSection?.tonalBalanceBands ?? [], [activeSection])
+  const activeMasteringBands = useMemo(() => activeSection?.masteringBands ?? [], [activeSection])
 
   const tonalActionBand = useMemo(() => {
     if (!activeTonalBands.length) return null
@@ -1169,7 +1200,7 @@ export default function App() {
   const rebuildSectionsFromBoundaries = (boundaries: number[], preferredSectionId?: string | null, dirty = true, autoSave = false) => {
     const buffer = audioBufferRef.current
     if (!buffer) return [] as SectionAnalysis[]
-    const nextSections = buildSections(buffer, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections))
+    const nextSections = buildSections(buffer, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections), masteringModesFromSections(sections), masteringTargetValue(selectedMasteringTarget))
     setSections(nextSections)
     setSectionMapDirty(dirty)
     setSectionMapStatus(dirty ? 'Manual section map edited - auto-saving...' : 'Saved section map loaded')
@@ -1245,7 +1276,7 @@ export default function App() {
     if (!trackIdentity || !sectionsToSave.length) return
     try {
       setSectionMapStatus('Saving section map...')
-      await saveSectionMap(trackIdentity, sectionsToSave, selectedGenre)
+      await saveSectionMap(trackIdentity, sectionsToSave, selectedGenre, masteringTargetValue(selectedMasteringTarget))
       setSectionMapDirty(false)
       setSectionMapStatus('Saved section map')
     } catch (error) {
@@ -1260,11 +1291,53 @@ export default function App() {
     const boundaries = boundariesFromSections(sections)
     const overrides = vocalOverridesFromSections(sections)
     overrides[activeSectionIndex] = mode
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), overrides)
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), overrides, masteringModesFromSections(sections), masteringTargetValue(selectedMasteringTarget))
     setSections(nextSections)
     setActiveSectionId(nextSections[activeSectionIndex]?.id ?? activeSection.id)
     setSectionMapDirty(true)
     setSectionMapStatus('Manual vocal mode edited - auto-saving...')
+    autoSaveSectionMap(nextSections)
+  }
+
+
+  const setActiveMasteringMode = (mode: MasteringMode) => {
+    if (!audioBufferRef.current || !activeSection || activeSectionIndex < 0) return
+    const boundaries = boundariesFromSections(sections)
+    const modes = masteringModesFromSections(sections)
+    modes[activeSectionIndex] = mode
+    const nextSections = buildSections(
+      audioBufferRef.current,
+      boundaries,
+      currentGenreProfile(),
+      vocalOverridesFromSections(sections),
+      modes,
+      masteringTargetValue(selectedMasteringTarget),
+    )
+    setSections(nextSections)
+    setActiveSectionId(nextSections[activeSectionIndex]?.id ?? activeSection.id)
+    setSectionMapDirty(true)
+    setSectionMapStatus('Manual mastering mode edited - auto-saving...')
+    autoSaveSectionMap(nextSections)
+  }
+
+  const setMasteringTargetPreset = (preset: MasteringTargetPreset) => {
+    setSelectedMasteringTarget(preset)
+    if (!audioBufferRef.current || !sections.length) return
+    const boundaries = boundariesFromSections(sections)
+    const nextSections = buildSections(
+      audioBufferRef.current,
+      boundaries,
+      currentGenreProfile(),
+      vocalOverridesFromSections(sections),
+      masteringModesFromSections(sections),
+      masteringTargetValue(preset),
+    )
+    setSections(nextSections)
+    if (activeSectionId && !nextSections.some((section) => section.id === activeSectionId)) {
+      setActiveSectionId(nextSections[activeSectionIndex]?.id ?? nextSections[0]?.id ?? null)
+    }
+    setSectionMapDirty(true)
+    setSectionMapStatus('Mastering target edited - auto-saving...')
     autoSaveSectionMap(nextSections)
   }
 
@@ -1287,7 +1360,7 @@ export default function App() {
     if (activeSectionIndex > 0) boundaries[activeSectionIndex] = safeStart
     if (activeSectionIndex < sections.length - 1) boundaries[activeSectionIndex + 1] = safeEnd
 
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections))
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections), masteringModesFromSections(sections), masteringTargetValue(selectedMasteringTarget))
     await saveCurrentSectionMap(nextSections)
   }
 
@@ -1319,8 +1392,8 @@ export default function App() {
         ? boundariesFromSections(sections)
         : undefined
 
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(nextGenre), vocalOverridesFromSections(sections))
-    const nextAutoSections = buildSections(audioBufferRef.current, undefined, currentGenreProfile(nextGenre))
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(nextGenre), vocalOverridesFromSections(sections), masteringModesFromSections(sections), masteringTargetValue(selectedMasteringTarget))
+    const nextAutoSections = buildSections(audioBufferRef.current, undefined, currentGenreProfile(nextGenre), [], [], masteringTargetValue(selectedMasteringTarget))
     autoSectionsRef.current = nextAutoSections
 
     setSections(nextSections)
@@ -1428,7 +1501,7 @@ export default function App() {
             <p className="eyebrow">The Music Doctor Presents</p>
             <div className="brand-lockup">
               <h1>Mix Assistant</h1>
-              <span className="version-pill">v0.164</span>
+              <span className="version-pill">v0.181</span>
             </div>
           </div>
 
@@ -1705,6 +1778,24 @@ export default function App() {
                             <option value="vocal">Vocal</option>
                             <option value="instrumental">Instrumental</option>
                           </select>
+                        ) : name === 'mastering' ? (
+                          <select
+                            className="vocal-override-card-select mastering-target-card-select"
+                            aria-label="Mastering loudness target"
+                            value={selectedMasteringTarget}
+                            onClick={(event) => event.stopPropagation()}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onChange={(event) => {
+                              event.stopPropagation()
+                              setMasteringTargetPreset(event.target.value as MasteringTargetPreset)
+                            }}
+                          >
+                            <option value="-14">-14</option>
+                            <option value="-11">-11</option>
+                            <option value="-9.5">-9.5</option>
+                            <option value="-8">-8</option>
+                            <option value="-7">-7</option>
+                          </select>
                         ) : null}
                       </div>
                       <strong>{metricDisplay(value)}</strong>
@@ -1844,6 +1935,44 @@ export default function App() {
                                   <span>{readout}</span>
                                   {infoOnly && <small className="info-only-note"><span className="info-icon">i</span> Information only</small>}
                                 </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {activeMetric === 'mastering' && activeMasteringBands.length > 0 && (
+                    <div className="level-balance-panel">
+                      <div className="tonal-strip-card">
+                        <div className="mastering-controls-row">
+                          <label>
+                            Section role
+                            <select
+                              className="vocal-override-card-select mastering-mode-select"
+                              value={activeSection.masteringMode ?? 'auto'}
+                              onChange={(event) => setActiveMasteringMode(event.target.value as MasteringMode)}
+                            >
+                              <option value="auto">Auto</option>
+                              <option value="full">Full</option>
+                              <option value="build">Build</option>
+                              <option value="breakdown">Breakdown</option>
+                              <option value="outro">Outro/Quiet</option>
+                            </select>
+                          </label>
+                          <span>Global target: {masteringTargetValue(selectedMasteringTarget).toFixed(1)} LUFS</span>
+                        </div>
+                        <div className="tonal-band-list">
+                          {activeMasteringBands.map((item) => {
+                            const readout = item.status === 'good' ? item.range : `${item.range} · ${Math.abs(item.displayPercent ?? item.deviationPercent)}% ${item.status}`
+                            return (
+                              <div className={`tonal-band-row mastering-band-row tonal-${item.severity}`} key={item.key} title={item.action}>
+                                <div className="mastering-band-header">
+                                  <span className="mastering-band-name">{item.label}</span>
+                                  <span className="mastering-band-description">{item.action}</span>
+                                </div>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${curveSliderPosition(item.deviationPercent)}%` }} /></span>
+                                <span className="tonal-readout">{readout}</span>
                               </div>
                             )
                           })}

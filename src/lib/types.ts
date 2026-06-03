@@ -10,6 +10,14 @@ export type RecommendationTarget =
   | 'Tonal balance'
   | 'Drum balance'
   | 'Vocal level'
+  | 'Master delivery'
+  | 'Loudness'
+  | 'True Peak'
+  | 'Punch'
+  | 'PSR'
+  | 'Dynamics'
+  | 'Peak level'
+  | 'Limiter'
 
 export interface Recommendation {
   title: string
@@ -66,9 +74,17 @@ export interface SectionMetrics {
   width: number
   drumsVsEverything: number
   vocalLevel: number | null
+  mastering: number
+}
+
+export interface MasteringMetrics {
+  integratedLufs: number
+  truePeakDb: number
+  psr: number
 }
 
 export type VocalOverrideMode = 'auto' | 'vocal' | 'instrumental'
+export type MasteringMode = 'auto' | 'full' | 'build' | 'breakdown' | 'outro'
 
 export interface SectionAnalysis {
   id: string
@@ -89,4 +105,7 @@ export interface SectionAnalysis {
   impactStrip?: ImpactStrip
   widthBands?: BalanceStripItem[]
   vocalOverride?: VocalOverrideMode
+  masteringMode?: MasteringMode
+  mastering?: MasteringMetrics
+  masteringBands?: BalanceStripItem[]
 }
