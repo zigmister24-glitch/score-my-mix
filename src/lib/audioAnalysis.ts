@@ -1594,17 +1594,20 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const transientEnergy = transientFlux(channel, sampleRate, startIndex, endIndex)
     const transientStrength = clamp((transientEnergy / Math.max(0.0001, fullRms)) * 220, 0, 1)
     const movement = clamp((zcr * 550) + transientStrength * 0.45, 0, 1)
-    const contrastScore = clamp(0.5 + sectionLift, 0, 1)
+    // Impact now measures section contrast, not only upward lift.
+    // A big drop can be just as impactful as a big lift.
+    const contrastMagnitude = Math.abs(sectionLift)
+    const contrastScore = clamp(0.5 + contrastMagnitude, 0, 1)
     const rawImpact = clamp(Math.round(56 + contrastScore * 16 + transientStrength * 14 + movement * 8 + Math.min(4, sectionDuration * 0.12)), 42, 94)
     const rawImpactStrip = makeImpactStrip(rawImpact, contrastScore, transientStrength, movement)
-    const impactLiftPercent = clamp(Math.max(0, rawImpactStrip.deviationPercent), 0, 23)
 
-    // v0.91: Keep the original Impact strip/detection logic, then translate the
-    // visible Impact score directly from the strip lift:
-    // 0% lift  -> 80%
-    // 23%+ lift -> 100%
+    // Visible Impact score:
+    // 0% contrast/change  -> 80%
+    // 23%+ contrast/change -> 100%
+    const impactContrastPercent = clamp(Math.min(23, contrastMagnitude * 100), 0, 23)
+
     const normalImpact = clamp(
-      Math.round(80 + (impactLiftPercent / 23) * 20),
+      Math.round(80 + (impactContrastPercent / 23) * 20),
       80,
       100,
     )
