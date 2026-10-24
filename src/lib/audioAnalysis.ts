@@ -1371,6 +1371,8 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const end = boundaries[i + 1]
     const startIndex = Math.floor(start * sampleRate)
     const endIndex = Math.floor(end * sampleRate)
+    // Shared by vocal analysis; Width no longer compares section halves.
+    const midpointIndex = startIndex + Math.floor((endIndex - startIndex) / 2)
     const energy = averageAbs(channel, startIndex, endIndex)
     const zcr = zeroCrossingRate(channel, startIndex, endIndex)
     const stereoWidth = estimateStereoWidth(buffer, startIndex, endIndex)
