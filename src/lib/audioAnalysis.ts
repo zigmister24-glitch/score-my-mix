@@ -7,12 +7,6 @@ export type AnalysisGenreProfile = {
     core?: number
     air?: number
   }
-  tonalWeights?: {
-    weight?: number
-    body?: number
-    core?: number
-    air?: number
-  }
   density?: {
     weight?: number
     body?: number
@@ -48,31 +42,14 @@ function normalizeTargets<T extends Record<string, number>>(targets: T): T {
   ) as T
 }
 
-function getTonalWeights(genreProfile?: AnalysisGenreProfile) {
-  const raw = {
-    weight: genreProfile?.tonalWeights?.weight ?? 0.25,
-    body: genreProfile?.tonalWeights?.body ?? 0.25,
-    core: genreProfile?.tonalWeights?.core ?? 0.25,
-    air: genreProfile?.tonalWeights?.air ?? 0.25,
-  }
-
-  return normalizeTargets(raw)
-}
-
-function scoreTonalBalance(bands: TonalBalanceBand[], genreProfile?: AnalysisGenreProfile) {
-  const weights = getTonalWeights(genreProfile)
-  // Match the readout: only the excess outside the healthy +/-10 zone counts.
-  // Small deviations cost gently; large deviations grow progressively stronger.
-  const penalties = bands.map((band) => {
+function scoreTonalBalance(bands: TonalBalanceBand[]) {
+  const weights = { weight: 0.25, body: 0.30, core: 0.35, air: 0.10 }
+  // Use the displayed excess beyond the accepted zone; high and low never cancel.
+  const averageDeviation = bands.reduce((sum, band) => {
     const excess = Math.max(0, Math.abs(band.deviationPercent) - 10)
-    const severeExcess = Math.max(0, excess - 10)
-    return { key: band.key, penalty: excess * 0.4 + severeExcess ** 2 * 0.08 }
-  })
-  const weightedPenalty = penalties.reduce((sum, band) => sum + band.penalty * weights[band.key], 0)
-  // A large isolated imbalance cannot hide in the average. Take the stronger
-  // penalty rather than stacking average, worst-band and band-count deductions.
-  const largestPenalty = Math.max(0, ...penalties.map((band) => band.penalty))
-  return clamp(Math.round(100 - Math.max(weightedPenalty, largestPenalty * 0.5)), 62, 100)
+    return sum + excess * weights[band.key]
+  }, 0)
+  return clamp(Math.round(100 - averageDeviation * 1.25), 0, 100)
 }
 
 function getDensityWeights(genreProfile?: AnalysisGenreProfile) {
@@ -967,9 +944,10 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
     : 0
 
   const baseWidthQuality = clamp(
-    90 - centrePenalty - narrowPenalty - tooWidePenalty + tastefulWideBonus + intentionalFocusBonus,
+    // Healthy stereo balance starts at 95; little movement should still clear 90.
+    95 - centrePenalty - narrowPenalty - tooWidePenalty + tastefulWideBonus + intentionalFocusBonus,
     62,
-    98,
+    100,
   )
 
   // Without a previous section, judge stereo quality alone.
@@ -1140,7 +1118,7 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
       meaning: 'How even the frequency spread feels from lows through highs in this section.',
       influencedBy: 'Low-end weight, low-mid build-up, presence energy, top-end sheen, and genre expectations.',
       currentRead:
-        metrics.tonalBalance >= 74
+        metrics.tonalBalance >= 90
           ? 'The tonal spread feels steady and genre-aware without obvious tilt.'
           : 'One tonal area is pulling more attention than the rest. This is useful as a quick guide, but genre still matters.',
     },
@@ -1385,7 +1363,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const previousEnd = i > 0 ? Math.floor(boundaries[i] * sampleRate) : startIndex
     const previousEnergy = i > 0 ? averageAbs(channel, previousStart, previousEnd) : globalEnergy
     const sectionLift = clamp((energy - previousEnergy) / Math.max(0.0001, previousEnergy), -0.5, 0.8)
-    const tonalBalance = scoreTonalBalance(tonalBalanceBands, genreProfile)
+    const tonalBalance = scoreTonalBalance(tonalBalanceBands)
     const widthBands = buildWidthBands(stereoWidth, previousStereoWidth, genreProfile)
     const width = scoreWidthFromBands(widthBands)
     const lowPunch = bandpassRms(channel, sampleRate, startIndex, endIndex, 75, 0.9)

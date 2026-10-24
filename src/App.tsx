@@ -73,14 +73,14 @@ const IS_LOCAL_DEV = window.location.hostname === 'localhost' || window.location
 
 const ACCEPTED_TYPES = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac']
 const GENRE_PROFILES = {
-  'Modern Pop': { tonal: { weight: 0, body: 0, core: 0, air: 0 }, tonalWeights: { weight: 0.22, body: 0.22, core: 0.31, air: 0.25 }, density: { weight: 0, body: 12, core: 0, air: 0 }, densityWeights: { weight: 0.22, body: 0.36, core: 0.29, air: 0.13 }, vocals: 0 },
-  'EDM / Dance': { tonal: { weight: 8, body: -2, core: -2, air: 4 }, tonalWeights: { weight: 0.34, body: 0.16, core: 0.20, air: 0.30 }, density: { weight: 10, body: 5, core: -3, air: 6 }, densityWeights: { weight: 0.32, body: 0.26, core: 0.22, air: 0.20 }, vocals: -1 },
-  'Rock': { tonal: { weight: 2, body: 5, core: 4, air: -2 }, tonalWeights: { weight: 0.26, body: 0.31, core: 0.30, air: 0.13 }, density: { weight: 1, body: 18, core: 6, air: -4 }, densityWeights: { weight: 0.23, body: 0.40, core: 0.27, air: 0.10 }, vocals: 0 },
-  'Metal / Nu Metal': { tonal: { weight: 5, body: 3, core: 5, air: 1 }, tonalWeights: { weight: 0.30, body: 0.24, core: 0.32, air: 0.14 }, density: { weight: 8, body: 12, core: 8, air: 0 }, densityWeights: { weight: 0.29, body: 0.32, core: 0.29, air: 0.10 }, vocals: 1 },
-  'Hip Hop / Rap': { tonal: { weight: 10, body: 2, core: -3, air: 2 }, tonalWeights: { weight: 0.42, body: 0.20, core: 0.23, air: 0.15 }, density: { weight: 14, body: 10, core: -4, air: -2 }, densityWeights: { weight: 0.40, body: 0.33, core: 0.18, air: 0.09 }, vocals: 1 },
-  'Singer Songwriter': { tonal: { weight: -3, body: 2, core: 5, air: 2 }, tonalWeights: { weight: 0.16, body: 0.28, core: 0.40, air: 0.16 }, density: { weight: -6, body: 8, core: 6, air: 2 }, densityWeights: { weight: 0.14, body: 0.35, core: 0.36, air: 0.15 }, vocals: 2 },
-  'Cinematic / Trailer': { tonal: { weight: 8, body: 6, core: -2, air: 1 }, tonalWeights: { weight: 0.38, body: 0.34, core: 0.16, air: 0.12 }, density: { weight: 12, body: 20, core: -4, air: -4 }, densityWeights: { weight: 0.35, body: 0.42, core: 0.15, air: 0.08 }, vocals: 0 },
-  'Scarlett Lullaby': { tonal: { weight: 14, body: 4, core: 2, air: 1 }, tonalWeights: { weight: 0.38, body: 0.34, core: 0.16, air: 0.12 }, density: { weight: 14, body: 22, core: 4, air: -2 }, densityWeights: { weight: 0.34, body: 0.42, core: 0.16, air: 0.08 }, vocals: 2 },
+  'Modern Pop': { tonal: { weight: 0, body: 0, core: 0, air: 0 }, density: { weight: 0, body: 12, core: 0, air: 0 }, densityWeights: { weight: 0.22, body: 0.36, core: 0.29, air: 0.13 }, vocals: 0 },
+  'EDM / Dance': { tonal: { weight: 8, body: -2, core: -2, air: 4 }, density: { weight: 10, body: 5, core: -3, air: 6 }, densityWeights: { weight: 0.32, body: 0.26, core: 0.22, air: 0.20 }, vocals: -1 },
+  'Rock': { tonal: { weight: 2, body: 5, core: 4, air: -2 }, density: { weight: 1, body: 18, core: 6, air: -4 }, densityWeights: { weight: 0.23, body: 0.40, core: 0.27, air: 0.10 }, vocals: 0 },
+  'Metal / Nu Metal': { tonal: { weight: 5, body: 3, core: 5, air: 1 }, density: { weight: 8, body: 12, core: 8, air: 0 }, densityWeights: { weight: 0.29, body: 0.32, core: 0.29, air: 0.10 }, vocals: 1 },
+  'Hip Hop / Rap': { tonal: { weight: 10, body: 2, core: -3, air: 2 }, density: { weight: 14, body: 10, core: -4, air: -2 }, densityWeights: { weight: 0.40, body: 0.33, core: 0.18, air: 0.09 }, vocals: 1 },
+  'Singer Songwriter': { tonal: { weight: -3, body: 2, core: 5, air: 2 }, density: { weight: -6, body: 8, core: 6, air: 2 }, densityWeights: { weight: 0.14, body: 0.35, core: 0.36, air: 0.15 }, vocals: 2 },
+  'Cinematic / Trailer': { tonal: { weight: 8, body: 6, core: -2, air: 1 }, density: { weight: 12, body: 20, core: -4, air: -4 }, densityWeights: { weight: 0.35, body: 0.42, core: 0.15, air: 0.08 }, vocals: 0 },
+  'Scarlett Lullaby': { tonal: { weight: 14, body: 4, core: 2, air: 1 }, density: { weight: 14, body: 22, core: 4, air: -2 }, densityWeights: { weight: 0.34, body: 0.42, core: 0.16, air: 0.08 }, vocals: 2 },
 } as const satisfies Record<string, AnalysisGenreProfile>
 
 type GenreProfileName = keyof typeof GENRE_PROFILES
