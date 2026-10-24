@@ -1,4 +1,4 @@
-import { BalanceStripItem, ImpactStrip, Recommendation, SectionAnalysis, SectionMetrics, TonalBalanceBand, MasteringMetrics, MasteringMode } from './types'
+import { BalanceStripItem, ImpactStrip, Recommendation, SectionAnalysis, SectionMetrics, TonalBalanceBand, MasteringMetrics } from './types'
 
 export type AnalysisGenreProfile = {
   tonal?: {
@@ -59,11 +59,20 @@ function getTonalWeights(genreProfile?: AnalysisGenreProfile) {
   return normalizeTargets(raw)
 }
 
-function weightedTonalDeviation(
-  values: Array<{ key: 'weight' | 'body' | 'core' | 'air'; value: number }>,
-  weights: Record<'weight' | 'body' | 'core' | 'air', number>,
-) {
-  return values.reduce((sum, item) => sum + item.value * weights[item.key], 0)
+function scoreTonalBalance(bands: TonalBalanceBand[], genreProfile?: AnalysisGenreProfile) {
+  const weights = getTonalWeights(genreProfile)
+  // Match the readout: only the excess outside the healthy +/-10 zone counts.
+  // Small deviations cost gently; large deviations grow progressively stronger.
+  const penalties = bands.map((band) => {
+    const excess = Math.max(0, Math.abs(band.deviationPercent) - 10)
+    const severeExcess = Math.max(0, excess - 10)
+    return { key: band.key, penalty: excess * 0.4 + severeExcess ** 2 * 0.08 }
+  })
+  const weightedPenalty = penalties.reduce((sum, band) => sum + band.penalty * weights[band.key], 0)
+  // A large isolated imbalance cannot hide in the average. Take the stronger
+  // penalty rather than stacking average, worst-band and band-count deductions.
+  const largestPenalty = Math.max(0, ...penalties.map((band) => band.penalty))
+  return clamp(Math.round(100 - Math.max(weightedPenalty, largestPenalty * 0.5)), 62, 100)
 }
 
 function getDensityWeights(genreProfile?: AnalysisGenreProfile) {
@@ -334,46 +343,16 @@ function estimateMasteringMetrics(buffer: AudioBuffer, start: number, end: numbe
 
 
 
-function masteringModeLabel(mode: MasteringMode) {
-  if (mode === 'full') return 'Full section'
-  if (mode === 'build') return 'Build / verse'
-  if (mode === 'breakdown') return 'Breakdown'
-  if (mode === 'outro') return 'Outro / quiet'
-  return 'Auto section role'
-}
-
-function loudnessTargetForSection(globalTarget: number, mode: MasteringMode, index: number, total: number, impact: number) {
-  const resolvedMode: MasteringMode = mode === 'auto'
-    ? (index === total - 1 ? 'outro' : index === 0 ? 'build' : impact >= 88 ? 'full' : 'build')
-    : mode
-
-  const offset = resolvedMode === 'full'
-    ? 0
-    : resolvedMode === 'build'
-      ? -3
-      : resolvedMode === 'breakdown'
-        ? -6
-        : -8
-
-  return {
-    mode: resolvedMode,
-    target: globalTarget + offset,
-    label: masteringModeLabel(resolvedMode),
-  }
-}
-
 function scoreMasteringDb(value: number, target: number, goodWindow: number, outerWindow: number, cap = 96) {
   const delta = Math.abs(value - target)
   if (delta <= goodWindow) return Math.round(clamp(90 + ((goodWindow - delta) / Math.max(0.0001, goodWindow)) * 8, 0, 100))
   return Math.round(clamp(cap - ((delta - goodWindow) / Math.max(0.0001, outerWindow - goodWindow)) * 46, 35, cap))
 }
 
-function scoreLoudness(integratedLufs: number, target: number) {
+export function scoreLoudness(integratedLufs: number, target = -14) {
   if (integratedLufs >= target) return 100
   const gap = target - integratedLufs
-  // Section loudness needs to be forgiving: intros, breakdowns and fades can be
-  // deliberately quieter while the whole track is still release-ready.
-  return Math.round(clamp(100 - (gap * 2.2), 65, 100))
+  return Math.round(clamp(100 - (gap * 2.2), 0, 99))
 }
 
 function scoreTruePeak(truePeakDb: number) {
@@ -392,7 +371,7 @@ function scorePsr(psr: number) {
   return Math.round(clamp(92 - ((psr - 12) * 4.5), 55, 92))
 }
 
-function makeMasteringBand(key: 'loudness' | 'truePeak' | 'punch', label: string, value: number, target: number, score: number, readout: string, context = ''): BalanceStripItem {
+function makeMasteringBand(key: 'loudness' | 'truePeak' | 'punch', label: string, value: number, target: number, score: number, readout: string): BalanceStripItem {
   const rawDeviation = key === 'truePeak'
     ? (value > target ? ((value - target) / 0.7) * 18 : 0)
     : key === 'punch'
@@ -403,7 +382,7 @@ function makeMasteringBand(key: 'loudness' | 'truePeak' | 'punch', label: string
   const status: BalanceStripItem['status'] = score >= 88 ? 'good' : deviationPercent < 0 ? 'low' : 'high'
   const severity: BalanceStripItem['severity'] = score >= 88 ? 'good' : score >= 74 ? 'watch' : 'fix'
   const action = key === 'loudness'
-    ? `Integrated section loudness. Target here: ${target.toFixed(1)} LUFS${context ? ` (${context})` : ''}. Reaching the target scores as ready; quieter sections are judged against the intended section role.`
+    ? `Integrated section loudness. Target here: ${target.toFixed(1)} LUFS. Sections at this level or louder score 100%; quieter sections lose 2.2 percentage points per LUFS.`
     : key === 'truePeak'
       ? 'Estimated true peak safety. Lower is safe; only peaks near or above the ceiling are flagged.'
       : 'PSR/punch. Shows whether the section still has dynamic life after compression and limiting.'
@@ -826,90 +805,6 @@ function makeImpactStrip(score: number, contrast: number, transientStrength: num
   return { key: 'impact', label: 'Impact', range, deviationPercent, status, severity, action, earCheck }
 }
 
-function makeCuriosityStrip(score: number): ImpactStrip {
-  // Section 1 does not have a previous section to contrast against, so use a
-  // listener-pull framing instead of normal impact. Right means the intro is
-  // creating more curiosity, not that it is overcooked.
-  const deviationPercent = Math.round(clamp(((score - 72) / 28) * 40, -34, 40))
-  const status: ImpactStrip['status'] = score >= 86 ? 'high' : score >= 72 ? 'good' : 'low'
-  const severity: ImpactStrip['severity'] = score >= 86 ? 'good' : score >= 72 ? 'watch' : 'fix'
-  const range = score >= 92 ? 'Magnetic' : score >= 86 ? 'Intriguing' : score >= 72 ? 'Building' : 'Passive'
-  const action = score >= 86
-    ? 'The intro is pulling attention. Protect the signature idea and avoid adding clutter just to make it louder.'
-    : score >= 72
-      ? 'There is a hook forming. Try one stronger identity move: a memorable texture, tighter groove, or earlier ear-candy moment.'
-      : 'The intro may need a clearer reason to stay. Add a signature sound, rhythmic identity, tension cue, or earlier vocal/lead moment.'
-  const earCheck = score >= 86
-    ? ['Would you keep listening?', 'Is the signature idea obvious?', 'Does it create anticipation?']
-    : score >= 72
-      ? ['Is there a clear identity?', 'Does something interesting happen early?', 'Would a stranger stay past 10 seconds?']
-      : ['Does the intro feel generic?', 'Is it too static?', 'Is the first hook arriving too late?']
-  return { key: 'curiosity', label: 'Curiosity', range, deviationPercent, status, severity, action, earCheck }
-}
-
-function scoreCuriosity(
-  channel: Float32Array,
-  buffer: AudioBuffer,
-  sampleRate: number,
-  startIndex: number,
-  endIndex: number,
-  fullRms: number,
-  zcr: number,
-  transientStrength: number,
-  stereoWidth: number,
-): number {
-  const sectionLength = Math.max(1, endIndex - startIndex)
-  const hookEnd = Math.min(endIndex, startIndex + Math.floor(sampleRate * 10))
-  const hookLength = Math.max(1, hookEnd - startIndex)
-  const half = startIndex + Math.floor(hookLength / 2)
-
-  const earlyRms = rms(channel, startIndex, hookEnd)
-  const firstHalfRms = rms(channel, startIndex, half)
-  const secondHalfRms = rms(channel, half, hookEnd)
-  const earlyTransient = transientFlux(channel, sampleRate, startIndex, hookEnd)
-  const earlyTransientStrength = clamp((earlyTransient / Math.max(0.0001, earlyRms)) * 95, 0, 1)
-  const earlyZcr = zeroCrossingRate(channel, startIndex, hookEnd)
-  const earlyMovement = clamp(earlyZcr * 260 + earlyTransientStrength * 0.35, 0, 1)
-
-  const energyIntent = clamp((earlyRms / Math.max(0.0001, fullRms)) * 0.68, 0, 1)
-  const evolution = clamp(Math.abs(secondHalfRms - firstHalfRms) / Math.max(0.0001, Math.max(firstHalfRms, secondHalfRms)) * 1.15, 0, 1)
-  const stereoIntrigue = clamp(stereoWidth * 0.95, 0, 1)
-
-  const low = bandpassRms(channel, sampleRate, startIndex, hookEnd, 110, 0.9)
-  const body = bandpassRms(channel, sampleRate, startIndex, hookEnd, 420, 0.85)
-  const presence = bandpassRms(channel, sampleRate, startIndex, hookEnd, 2600, 0.85)
-  const air = bandpassRms(channel, sampleRate, startIndex, hookEnd, 8500, 0.7)
-  const spectrumTotal = Math.max(0.0001, low + body + presence + air)
-  const spectralIdentity = clamp(
-    Math.max(low, body, presence, air) / spectrumTotal * 1.15 +
-    Math.abs((presence + air) - (low + body)) / spectrumTotal * 0.45,
-    0,
-    1,
-  )
-
-  const introConfidence = clamp(
-    earlyMovement * 0.32 +
-    earlyTransientStrength * 0.18 +
-    evolution * 0.18 +
-    stereoIntrigue * 0.12 +
-    spectralIdentity * 0.14 +
-    energyIntent * 0.06,
-    0,
-    1,
-  )
-
-  // Blend a few simple, tunable heuristics into one taste-based intro score.
-  // v0.54 makes the curve less generous so most good intros land in the 75–90
-  // range, and 95+ is reserved for an obvious, memorable opening idea.
-  const raw =
-    56 +
-    introConfidence * 34 +
-    evolution * 4 +
-    Math.min(3, sectionLength / sampleRate * 0.12)
-
-  return clamp(Math.round(raw), 45, 98)
-}
-
 function primaryTonalRecommendation(bands: TonalBalanceBand[], tonalBalance: number): Recommendation {
   const biggest = [...bands].sort((a, b) => Math.abs(b.deviationPercent) - Math.abs(a.deviationPercent))[0]
   if (!biggest || biggest.severity === 'good') {
@@ -981,7 +876,7 @@ function makeWidthBand(key: string, label: string, range: string, deviationPerce
   return { key, label, range, deviationPercent, status, severity, action }
 }
 
-function buildWidthBands(stereoWidth: number, previousStereoWidth: number | null, widthMotion: number, genreProfile?: AnalysisGenreProfile): BalanceStripItem[] {
+function buildWidthBands(stereoWidth: number, previousStereoWidth: number | null, genreProfile?: AnalysisGenreProfile): BalanceStripItem[] {
   // stereoWidth is side / (mid + side). Wide sides are not automatically bad.
   // Width combines: centre anchor, side energy, total space, and stereo movement.
   // The centre readout is deliberately softer than the side readout: a modern,
@@ -994,12 +889,8 @@ function buildWidthBands(stereoWidth: number, previousStereoWidth: number | null
   const narrowExcess = Math.max(0, -sideDeviation - 8)
   const middleDeviation = clamp((narrowExcess * 0.45) - (wideExcess * 0.28), -24, 18)
   const expansionPercent = previousStereoWidth == null
-    ? widthMotion * 100
+    ? 0
     : ((stereoWidth - previousStereoWidth) / Math.max(0.04, previousStereoWidth)) * 100
-  // Make movement more expressive so chorus/bridge expansion can separate from
-  // a stable verse, without demanding constant stereo motion.
-  const motionDeviation = clamp(expansionPercent * 1.05 + widthMotion * 52, -32, 32)
-
   const middle = makeWidthBand('middle', 'Middle', 'Centre anchor', middleDeviation, 'The centre may be getting hollow. Keep vocal, kick, bass, and snare firmly centred.', 'The mix is leaning centre-heavy. Move guitars, pads, delays, or textures further out before widening the master bus.')
 
   const makeWideFriendlyBand = (key: string, label: string, range: string): BalanceStripItem => {
@@ -1024,28 +915,28 @@ function buildWidthBands(stereoWidth: number, previousStereoWidth: number | null
     return { key, label, range, deviationPercent, status, severity, action }
   }
 
-  const motionPercent = Math.round(clamp(motionDeviation, -32, 32))
-  const motionStatus: BalanceStripItem['status'] = motionPercent < -10 ? 'low' : motionPercent > 10 ? 'high' : 'good'
-  const motionSeverity: BalanceStripItem['severity'] = motionPercent < -20 ? 'watch' : 'good'
+  const motionPercent = Math.round(expansionPercent)
+  const motionStatus: BalanceStripItem['status'] = motionPercent < 0 ? 'low' : motionPercent > 0 ? 'high' : 'good'
+  const motionSeverity: BalanceStripItem['severity'] = 'good'
   const movement: BalanceStripItem = {
     key: 'movement',
     label: 'Movement',
-    range: 'Section expansion',
+    range: 'Change from previous section',
     deviationPercent: motionPercent,
     status: motionStatus,
     severity: motionSeverity,
     action: motionStatus === 'high'
       ? 'The stereo image is expanding here. Great for choruses, lifts, bridges, and final sections when the centre still holds.'
       : motionStatus === 'low'
-        ? 'The stereo field is not changing much here. Fine for focused verses, but add an opening move if the section should feel bigger.'
-        : 'The stereo field has useful movement without feeling disconnected.',
+        ? 'The stereo image is narrowing compared with the previous section. This can create focus and contrast.'
+        : 'The stereo width is similar to the previous section.',
   }
 
   return [
     middle,
     makeWideFriendlyBand('side', 'Side', 'Stereo edges'),
     makeWideFriendlyBand('amount', 'Space', 'Overall spread'),
-    movement,
+    ...(previousStereoWidth == null ? [] : [movement]),
   ]
 }
 
@@ -1058,17 +949,10 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
   const movementDeviation = movement?.deviationPercent ?? 0
   const movementAmount = Math.abs(movementDeviation)
 
-  // v0.116:
-  // Controlled narrowing can be excellent. A narrower verse should not be
-  // punished heavily if the centre is stable and the stereo image is breathing.
-  // Weak/static narrowness still gets penalised.
+  // Stereo quality is independent of movement so its influence stays at 5%.
   const centrePenalty = Math.max(0, Math.abs(middleDeviation) - 18) * 0.20
-
   const centreStable = Math.abs(middleDeviation) <= 20
-  const movementBreathing = movementDeviation >= -10 && movementDeviation <= 18
-  const movementLively = movementDeviation > 4 && movementDeviation <= 28
-  const intentionalNarrowing = sideDeviation < -14 && centreStable && (movementBreathing || movementLively)
-
+  const intentionalNarrowing = sideDeviation < -14 && centreStable
   const rawNarrowPenalty = sideDeviation < -14 ? (Math.abs(sideDeviation) - 14) * 0.42 : 0
   const narrowPenalty = intentionalNarrowing ? rawNarrowPenalty * 0.35 : rawNarrowPenalty
 
@@ -1088,56 +972,12 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
     98,
   )
 
-  // v0.117:
-  // Width movement now has more emotional influence. Static-wide mixes should
-  // no longer score similarly to mixes with meaningful stereo storytelling.
-  const expansionBonus = movementAmount > 3 && Math.abs(middleDeviation) <= 28
-    ? Math.min(10, (movementAmount - 3) * 0.34)
-    : 0
+  // Without a previous section, judge stereo quality alone.
+  if (!movement) return clamp(Math.round(baseWidthQuality), 50, 100)
 
-  const breathingBonus = movementAmount > 5 && movementAmount <= 14
-    ? 2.5
-    : 0
-
-  const intentionalContrastBonus = intentionalNarrowing
-    ? 3.5
-    : 0
-
-  // v0.129:
-  // Movement is now judged by magnitude, not direction.
-  // A dramatic narrowing can be as emotionally useful as a dramatic widening.
-  const movementFlatnessPenalty =
-    movementAmount <= 4
-      ? 18
-      : movementAmount <= 8
-        ? 9
-        : 0
-
-  const movementStoryBonus =
-    movementAmount > 8
-      ? Math.min(14, (movementAmount - 8) * 0.42)
-      : 0
-
-  const widthMovementQuality = clamp(
-    70 + expansionBonus + breathingBonus + intentionalContrastBonus + movementStoryBonus - movementFlatnessPenalty,
-    50,
-    100,
-  )
-
-  const eliteMovementBonus =
-    movementAmount > 18 &&
-    Math.abs(middleDeviation) <= 24
-      ? Math.min(8, (movementAmount - 18) * 0.58)
-      : 0
-
-  return clamp(
-    Math.round(
-      (baseWidthQuality * 0.45) +
-      ((widthMovementQuality + eliteMovementBonus) * 0.55)
-    ),
-    50,
-    100,
-  )
+  // Either direction earns equal credit, capped at a 20% width change.
+  const movementScore = clamp(movementAmount / 20, 0, 1) * 100
+  return clamp(Math.round(baseWidthQuality * 0.95 + movementScore * 0.05), 0, 100)
 }
 
 function buildClarityBands(
@@ -1274,7 +1114,7 @@ function primaryClarityRecommendation(bands: BalanceStripItem[], clarity: number
   }
 }
 
-function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommendation[], isIntro = false, mastering?: MasteringMetrics) {
+function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommendation[], mastering?: MasteringMetrics) {
   const dominantRecommendation = recommendations[0]
   return {
     clarity: {
@@ -1286,19 +1126,7 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
           ? 'The density feels controlled enough that the main ideas still read clearly.'
           : `This section may be carrying too much density in one area. Biggest contributor here: ${dominantRecommendation.title.toLowerCase()}.`,
     },
-    impact: isIntro
-      ? {
-          title: 'Curiosity - How much variation, contrast, and listener interest exists in this section?',
-          meaning: 'How strongly the intro makes a listener want to keep listening.',
-          influencedBy: 'Early movement, signature texture, rhythmic identity, stereo intrigue, tension, and how quickly the intro declares a personality.',
-          currentRead:
-            metrics.impact >= 86
-              ? 'The opening has a clear pull. It gives the listener a reason to stay.'
-              : metrics.impact >= 72
-                ? 'The opening is building curiosity, but one stronger signature idea could make it more memorable.'
-                : 'The intro may need a clearer hook, texture, groove, or tension cue in the first few seconds.',
-        }
-      : {
+    impact: {
           title: 'Impact - How much punch, energy, and movement does this section create?',
           meaning: 'How strongly this section hits in energy, punch, and movement.',
           influencedBy: 'Transient shape, low-end control, density, and how much the section contrasts with the one before it.',
@@ -1342,7 +1170,7 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
     },
     width: {
       title: 'Width - How wide and immersive does the stereo image feel?',
-      meaning: 'How the stereo field supports the section: centre strength, side space, and whether the mix expands or contracts with emotional intent.',
+      meaning: 'Width scores 95% stereo quality and 5% change from the previous section. Widening and narrowing earn equal movement credit, reaching full credit at a 20% change. The first section uses stereo quality alone.',
       influencedBy: 'Centre-vs-side contrast, panning automation, doubled parts, pads, delay/reverb spread, mono compatibility, and width movement from the previous section.',
       currentRead:
         metrics.width >= 88
@@ -1352,11 +1180,11 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
             : 'The stereo image may be too static, too narrow, or losing centre confidence. Use width as contrast rather than making everything wide all the time.',
     },
     mastering: {
-      title: 'Mastering - Is this section release-ready without being crushed?',
-      meaning: 'A combined delivery read based on section loudness, estimated true peak safety, and PSR/punch. It is a technical readiness card, not a replacement for the creative mix cards.',
+      title: 'Mastering - How loud is this section?',
+      meaning: 'Section loudness scores 100% at -14 LUFS or louder and drops 2.2 percentage points per LUFS below that. Estimated true peak safety and PSR/punch remain separate readings.',
       influencedBy: 'Limiter drive, clipper ceiling, bus compression, low-end sustain, transient punch, saturation, and how hard the section is being pushed.',
       currentRead: mastering
-        ? `${mastering.integratedLufs.toFixed(1)} LUFS, ${mastering.truePeakDb.toFixed(2)} dBTP, PSR ${mastering.psr.toFixed(1)} dB. ${metrics.mastering >= 88 ? 'This section looks release-ready technically.' : metrics.mastering >= 75 ? 'This section is close, but one delivery value is worth checking.' : 'This section may be too quiet, too hot, or dynamically flattened.'}`
+        ? `${mastering.integratedLufs.toFixed(1)} LUFS, ${mastering.truePeakDb.toFixed(2)} dBTP, PSR ${mastering.psr.toFixed(1)} dB. ${mastering.integratedLufs >= -14 ? 'This section meets the -14 LUFS loudness target.' : 'This section is below the -14 LUFS loudness target.'}`
         : 'Mastering readout unavailable for this section.',
     },
   }
@@ -1385,7 +1213,7 @@ function normaliseCustomBoundaries(boundaries: number[], duration: number) {
   return result.length >= 2 ? result : [0, duration]
 }
 
-export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile, vocalOverrides: VocalOverrideMode[] = [], masteringModes: MasteringMode[] = [], masteringTarget = -9.5): SectionAnalysis[] {
+export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile, vocalOverrides: VocalOverrideMode[] = []): SectionAnalysis[] {
   const channel = buffer.getChannelData(0)
   const sampleRate = buffer.sampleRate
   const boundaries = customBoundaries?.length
@@ -1549,41 +1377,14 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const previousStereoWidth = i > 0
       ? estimateStereoWidth(buffer, Math.floor(boundaries[i - 1] * sampleRate), Math.floor(boundaries[i] * sampleRate))
       : null
-    const midpointIndex = startIndex + Math.floor((endIndex - startIndex) / 2)
-    const widthFirstHalf = estimateStereoWidth(buffer, startIndex, midpointIndex)
-    const widthSecondHalf = estimateStereoWidth(buffer, midpointIndex, endIndex)
-    const widthMotion = Math.abs(widthSecondHalf - widthFirstHalf) / Math.max(0.04, Math.max(widthFirstHalf, widthSecondHalf))
     const sectionDuration = end - start
     const tonalBalanceBands = buildTonalBalanceBands(channel, sampleRate, startIndex, endIndex, genreProfile)
-    const tonalWeights = getTonalWeights(genreProfile)
-    const tonalDeviations = tonalBalanceBands.map((band) => ({
-      key: band.key,
-      value: Math.abs(band.deviationPercent),
-    }))
-    const tonalWorstDeviation = Math.max(...tonalDeviations.map((band) => band.value))
-    const tonalWeightedDeviation = weightedTonalDeviation(tonalDeviations, tonalWeights)
-    const tonalWatchCount = tonalDeviations.filter((band) => band.value > 10).length
-    const tonalFixCount = tonalDeviations.filter((band) => band.value > 20).length
-
     const previousStart = i > 0 ? Math.floor(boundaries[i - 1] * sampleRate) : startIndex
     const previousEnd = i > 0 ? Math.floor(boundaries[i] * sampleRate) : startIndex
     const previousEnergy = i > 0 ? averageAbs(channel, previousStart, previousEnd) : globalEnergy
     const sectionLift = clamp((energy - previousEnergy) / Math.max(0.0001, previousEnergy), -0.5, 0.8)
-    // v0.114: genre-aware tonal band weighting.
-    // The main tonal score now follows weighted emotional importance per genre.
-    // Worst-band deviation remains as a small safety penalty so a broken band
-    // cannot hide completely.
-    const tonalBaseScore = tonalWeightedDeviation <= 10
-      ? 96
-      : tonalWeightedDeviation <= 20
-        ? 92
-        : tonalWeightedDeviation <= 30
-          ? 86
-          : 86 - ((tonalWeightedDeviation - 30) * 0.8)
-    const tonalWorstPenalty = Math.max(0, tonalWorstDeviation - 18) * 0.22
-    const tonalStackPenalty = Math.max(0, tonalWatchCount - 1) * 0.5 + tonalFixCount * 0.8
-    const tonalBalance = clamp(Math.round(tonalBaseScore - tonalWorstPenalty - tonalStackPenalty), 62, 100)
-    const widthBands = buildWidthBands(stereoWidth, previousStereoWidth, widthMotion, genreProfile)
+    const tonalBalance = scoreTonalBalance(tonalBalanceBands, genreProfile)
+    const widthBands = buildWidthBands(stereoWidth, previousStereoWidth, genreProfile)
     const width = scoreWidthFromBands(widthBands)
     const lowPunch = bandpassRms(channel, sampleRate, startIndex, endIndex, 75, 0.9)
     const lowMidMask = bandpassRms(channel, sampleRate, startIndex, endIndex, 260, 0.85)
@@ -1612,9 +1413,8 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       100,
     )
 
-    const curiosity = scoreCuriosity(channel, buffer, sampleRate, startIndex, endIndex, fullRms, zcr, transientStrength, stereoWidth)
-    const impact = i === 0 ? curiosity : normalImpact
-    const impactStrip = i === 0 ? makeCuriosityStrip(curiosity) : rawImpactStrip
+    const impact = normalImpact
+    const impactStrip = rawImpactStrip
     const coreStereoSeparation = buffer.numberOfChannels >= 2
       ? (
         estimateBandStereoSeparation(buffer, sampleRate, startIndex, endIndex, 520, 0.9)
@@ -2127,7 +1927,6 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     )
 
     const vocalOverride = vocalOverrides[i] ?? 'auto'
-    const masteringMode = masteringModes[i] ?? 'auto'
     const forcedVocalLevel = scoreVocalLevelFromRatio(finalJudgedVocalRatio, vocalJudgementTarget)
     const autoVocalAnchor = Boolean(
       provisionalVocalLevel != null
@@ -2160,14 +1959,13 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const vocalLevel = hasVocalAnchor ? (vocalOverride === 'vocal' ? forcedVocalLevel : provisionalVocalLevel) : null
 
     const mastering = estimateMasteringMetrics(buffer, startIndex, endIndex, masteringGain)
-    const loudnessRole = loudnessTargetForSection(masteringTarget, masteringMode, i, boundaries.length - 1, impact)
-    const loudnessTarget = loudnessRole.target
+    const loudnessTarget = -14
     const loudness = scoreLoudness(mastering.integratedLufs, loudnessTarget)
     const truePeak = scoreTruePeak(mastering.truePeakDb)
     const punch = scorePsr(mastering.psr)
-    const masteringScore = Math.round((loudness * 0.42) + (truePeak * 0.25) + (punch * 0.33))
+    const masteringScore = loudness
     const masteringBands = [
-      makeMasteringBand('loudness', 'Loudness', mastering.integratedLufs, loudnessTarget, loudness, `${mastering.integratedLufs.toFixed(1)} LUFS`, loudnessRole.label),
+      makeMasteringBand('loudness', 'Loudness', mastering.integratedLufs, loudnessTarget, loudness, `${mastering.integratedLufs.toFixed(1)} LUFS`),
       makeMasteringBand('truePeak', 'True Peak', mastering.truePeakDb, -0.8, truePeak, `${mastering.truePeakDb.toFixed(2)} dBTP`),
       makeMasteringBand('punch', 'Punch', mastering.psr, 10, punch, `PSR ${mastering.psr.toFixed(1)} dB`),
     ]
@@ -2194,7 +1992,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const metrics = { clarity, impact, tonalBalance, width, drumsVsEverything, vocalLevel, mastering: masteringScore }
     // Match the section score to visible cards, but skip Vocal when a section
     // is likely an intro, outro, instrumental, or breakdown with no vocal anchor.
-    const visibleCardScores = [clarity, impact, tonalBalance, width, masteringScore, ...(vocalLevel == null ? [] : [vocalLevel])]
+    const visibleCardScores = [clarity, ...(i === 0 ? [] : [impact]), tonalBalance, width, masteringScore, ...(vocalLevel == null ? [] : [vocalLevel])]
     const score = Math.round(visibleCardScores.reduce((sum, value) => sum + Math.round(value), 0) / visibleCardScores.length)
 
     const strengths = [
@@ -2202,19 +2000,12 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
         title: 'Density is working in your favour',
         detail: 'The atmosphere already feels like part of the song rather than a random accident.',
       },
-      {
-        title: i === 0
-          ? (impact >= 86 ? 'Curiosity is pulling attention' : 'The intro is setting the table')
-          : (impact >= 74 ? 'Impact feels confident' : 'Dynamics feel controlled'),
-        detail:
-          i === 0
-            ? (impact >= 86
-                ? 'The opening section has enough identity and movement to make the listener lean in.'
-                : 'The opening has a base to build from, but one stronger signature idea could make it more magnetic.')
-            : impact >= 74
-              ? 'This section carries enough forward motion to feel rewarding.'
-              : 'Nothing feels wildly unruly here, which gives you a steady base to build from.',
-      },
+      ...(i === 0 ? [] : [{
+        title: impact >= 74 ? 'Impact feels confident' : 'Dynamics feel controlled',
+        detail: impact >= 74
+          ? 'This section carries enough forward motion to feel rewarding.'
+          : 'Nothing feels wildly unruly here, which gives you a steady base to build from.',
+      }]),
       {
         title: clarity >= 72 ? 'Density is landing well' : 'There is a recognisable tonal identity',
         detail:
@@ -2281,25 +2072,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
               target: 'Vocal',
             },
       primaryTonalRecommendation(tonalBalanceBands, tonalBalance),
-      i === 0
-        ? (impact < 82
-            ? {
-                title: 'Make the intro more curious',
-                detail: impact < 70
-                  ? 'Try adding a stronger opening identity: a signature sound, rhythmic motif, tension cue, or earlier vocal/lead moment.'
-                  : 'The intro is working, but one memorable texture, movement change, or ear-candy moment could pull the listener in faster.',
-                priority: impact < 70 ? 'High impact' : 'Worth exploring',
-                estimatedLift: impact < 70 ? '+5 to +10 curiosity' : '+2 to +6 curiosity',
-                target: 'Mix bus',
-              }
-            : {
-                title: 'Curiosity is working. Protect the hook',
-                detail: 'The opening is already pulling attention. Improve other cards without cluttering the signature idea.',
-                priority: 'Optional polish',
-                estimatedLift: '+1 to +3 curiosity',
-                target: 'Mix bus',
-              })
-        : impact < 75
+      ...(i === 0 ? [] : [impact < 75
           ? {
               title: 'Make the hit feel more obvious',
               detail: impact < 68
@@ -2315,7 +2088,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
               priority: 'Worth exploring',
               estimatedLift: '+1 to +3 impact',
               target: 'Drums',
-            },
+            }]),
       width < 80
         ? {
             title: width < 70 ? 'Create clearer width contrast first' : 'Add a subtle width movement',
@@ -2355,7 +2128,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       recommendations,
       metrics,
       vocalOverride,
-      metricInsights: buildMetricInsights(metrics, recommendations, i === 0, mastering),
+      metricInsights: buildMetricInsights(metrics, recommendations, mastering),
       tonalBalanceBands,
       clarityBands,
       levelBalance,

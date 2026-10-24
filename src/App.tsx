@@ -1,23 +1,11 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import WaveformPanel, { WaveformHandle } from './components/WaveformPanel'
 import { AnalysisGenreProfile, buildSections, decodeAudioFile, formatTime } from './lib/audioAnalysis'
-import { SectionAnalysis, VocalOverrideMode, MasteringMode } from './lib/types'
+import { SectionAnalysis, VocalOverrideMode } from './lib/types'
 
-declare global {
-  interface Window {
-    webkitOfflineAudioContext?: typeof OfflineAudioContext
-  }
-}
-
-
-function curveSliderPosition(deviationPercent: number, useAbsolute = false) {
-  // v0.134:
-  // Movement uses magnitude: abs(-32..+32), so both widening and narrowing count.
-  // 0 movement = far left, 16 = centre, 32 = far right.
-  if (useAbsolute) {
-    const movementAmount = Math.min(32, Math.abs(deviationPercent))
-    return (movementAmount / 32) * 100
-  }
+function curveSliderPosition(deviationPercent: number, isMovement = false) {
+  // Signed section-to-section movement: zero is centred, +/-32% reaches an edge.
+  if (isMovement) return 50 + Math.max(-32, Math.min(32, deviationPercent)) / 32 * 50
 
   // Other rows keep the normal centred deviation mapping.
   const scorePosition = 85 + deviationPercent
@@ -61,10 +49,10 @@ The engine compares vocal energy against the surrounding mix and nearby vocal se
 To improve this:
 Balance vocal level consistency, automate phrases, reduce masking around vocals, and avoid sudden jumps or buried sections.`
     case 'mastering':
-      return `Mastering checks whether the section is technically release-ready without crushing the life out of it.
+      return `Mastering scores section loudness against a fixed -14 LUFS target.
 
 How it works:
-The engine estimates LUFS, true peak, and PSR/punch, then combines them into one section-level delivery score.
+Sections at -14 LUFS or louder score 100%; quieter sections lose 2.2 percentage points per LUFS. True peak and PSR/punch are shown separately.
 
 To improve this:
 Adjust limiter drive, clipper/ceiling, bus compression, low-end sustain, and transient control section by section.`
@@ -76,14 +64,6 @@ The engine analyses transients, dynamic contrast, section lift, and arrangement 
 
 To improve this:
 Increase chorus lift, improve drum punch, add transitions, create tension/release, and strengthen dynamic contrast.`
-    case 'curiosity':
-      return `Curiosity measures whether the section has enough variation and movement to keep the listener engaged.
-
-How it works:
-The engine looks for energy movement, tonal changes, transient variation, stereo movement, arrangement evolution, and pacing.
-
-To improve this:
-Add fills, automation, FX throws, transitions, vocal variations, arrangement changes, or new textures to avoid repetitive looping.`
     default:
       return ''
   }
@@ -133,17 +113,14 @@ type SavedSectionMapItem = {
   end: number
   label?: string
   vocalOverride?: VocalOverrideMode
-  masteringMode?: MasteringMode
 }
 
 type SavedSectionMap = {
   sections: SavedSectionMapItem[]
   source?: string
   genre?: GenreProfileName
-  masteringTarget?: number
 }
 
-type MasteringTargetPreset = '-14' | '-11' | '-9.5' | '-8' | '-7'
 
 function stripExtension(name: string) {
   return name.replace(/\.[^.]+$/, '')
@@ -321,11 +298,6 @@ function parseTrackIdentityFromFilename(filename: string) {
 
 function impactReadout(item: ImpactStrip) {
   const amount = Math.abs(item.deviationPercent)
-  if (item.key === 'curiosity') {
-    if (item.status === 'low') return `${amount}% passive`
-    if (item.status === 'high') return item.range
-    return item.range || 'Building'
-  }
   if (item.status === 'low') return `${amount}% flat`
   if (item.status === 'high') return amount >= 31 ? `${amount}% huge lift` : `${amount}% big lift`
   return `${amount}% lift`
@@ -348,11 +320,8 @@ function widthReadout(item: BalanceStripItem) {
     return 'Balanced'
   }
   if (item.key === 'movement') {
-    if (value < -20) return 'Static'
-    if (value < -10) return 'Subtle move'
-    if (value > 26) return 'Big expansion'
-    if (value > 10) return 'Opening up'
-    return 'Breathing'
+    if (value === 0) return '0% · Steady'
+    return `${value > 0 ? '+' : ''}${value}% · ${value > 0 ? 'Widening' : 'Narrowing'}`
   }
   if (value < -20) return 'Focused'
   if (value < -10) return 'Tight'
@@ -434,7 +403,7 @@ async function readSectionMap(track: TrackIdentityState, sectionGenre?: GenrePro
   }
 }
 
-async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalysis[], sectionGenre?: GenreProfileName, masteringTarget?: number) {
+async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalysis[], sectionGenre?: GenreProfileName) {
   if (IS_LOCAL_DEV) return { ok: true, local: true }
 
   const payload = {
@@ -444,7 +413,6 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
     display_name: track.displayName,
     duration_seconds: track.durationSeconds,
     genre: track.durationSeconds >= 60 ? sectionGenre : undefined,
-    masteringTarget,
     sections: sections.map((section, index) => {
       const isLastSection = index === sections.length - 1
       const savedEnd = isLastSection
@@ -456,7 +424,6 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
         end: Number(savedEnd.toFixed(3)),
         label: section.label,
         vocalOverride: section.vocalOverride ?? 'auto',
-        masteringMode: section.masteringMode ?? 'auto',
       }
     }),
   }
@@ -573,18 +540,6 @@ function vocalOverridesFromSavedMap(map: SavedSectionMap | null): VocalOverrideM
   return map?.sections?.map((section) => section.vocalOverride ?? 'auto') ?? []
 }
 
-function masteringModesFromSections(sections: SectionAnalysis[]): MasteringMode[] {
-  return sections.map((section) => section.masteringMode ?? 'auto')
-}
-
-function masteringModesFromSavedMap(map: SavedSectionMap | null): MasteringMode[] {
-  return map?.sections?.map((section) => section.masteringMode ?? 'auto') ?? []
-}
-
-function masteringTargetValue(preset: MasteringTargetPreset) {
-  return Number(preset)
-}
-
 async function readLeaderboard(): Promise<{
   allTime: LeaderboardEntry[]
   hotStreak: LeaderboardEntry[]
@@ -695,109 +650,6 @@ function parseSectionTime(value: string) {
 
 
 
-function interleaveChannels(left: Float32Array, right: Float32Array) {
-  const length = left.length + right.length
-  const result = new Float32Array(length)
-  let outputIndex = 0
-
-  for (let inputIndex = 0; inputIndex < left.length; inputIndex += 1) {
-    result[outputIndex++] = left[inputIndex]
-    result[outputIndex++] = right[inputIndex]
-  }
-
-  return result
-}
-
-function writeString(view: DataView, offset: number, value: string) {
-  for (let index = 0; index < value.length; index += 1) {
-    view.setUint8(offset + index, value.charCodeAt(index))
-  }
-}
-
-function floatTo16BitPcm(view: DataView, offset: number, input: Float32Array) {
-  let writeOffset = offset
-
-  for (let index = 0; index < input.length; index += 1, writeOffset += 2) {
-    const sample = Math.max(-1, Math.min(1, input[index]))
-    view.setInt16(writeOffset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
-  }
-}
-
-function audioBufferToWav(buffer: AudioBuffer) {
-  const numberOfChannels = Math.min(buffer.numberOfChannels, 2)
-  const sampleRate = buffer.sampleRate
-  const bitDepth = 16
-  const bytesPerSample = bitDepth / 8
-  const blockAlign = numberOfChannels * bytesPerSample
-
-  let samples: Float32Array
-  if (numberOfChannels === 2) {
-    samples = interleaveChannels(buffer.getChannelData(0), buffer.getChannelData(1))
-  } else {
-    samples = buffer.getChannelData(0)
-  }
-
-  const wavBuffer = new ArrayBuffer(44 + samples.length * bytesPerSample)
-  const view = new DataView(wavBuffer)
-
-  writeString(view, 0, 'RIFF')
-  view.setUint32(4, 36 + samples.length * bytesPerSample, true)
-  writeString(view, 8, 'WAVE')
-  writeString(view, 12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true)
-  view.setUint16(22, numberOfChannels, true)
-  view.setUint32(24, sampleRate, true)
-  view.setUint32(28, sampleRate * blockAlign, true)
-  view.setUint16(32, blockAlign, true)
-  view.setUint16(34, bitDepth, true)
-  writeString(view, 36, 'data')
-  view.setUint32(40, samples.length * bytesPerSample, true)
-  floatTo16BitPcm(view, 44, samples)
-
-  return wavBuffer
-}
-
-async function renderAirContour(audioBuffer: AudioBuffer, gainDb: number, frequency: number) {
-  const OfflineAudio = window.OfflineAudioContext || window.webkitOfflineAudioContext
-  if (!OfflineAudio) {
-    throw new Error('OfflineAudioContext is not supported in this browser.')
-  }
-
-  const offlineContext = new OfflineAudio(
-    audioBuffer.numberOfChannels,
-    audioBuffer.length,
-    audioBuffer.sampleRate,
-  )
-
-  const source = offlineContext.createBufferSource()
-  source.buffer = audioBuffer
-
-  const airShelf = offlineContext.createBiquadFilter()
-  airShelf.type = 'highshelf'
-  airShelf.frequency.value = frequency
-  airShelf.gain.value = gainDb
-
-  source.connect(airShelf)
-  airShelf.connect(offlineContext.destination)
-  source.start(0)
-
-  return offlineContext.startRendering()
-}
-
-function safeDownloadName(fileName: string, gainDb: number, frequency: number) {
-  const baseName = stripExtension(fileName || 'mix')
-    .replace(/[^a-z0-9-_]+/gi, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-
-  const gainTag = gainDb >= 0 ? `plus-${gainDb.toFixed(1)}` : `minus-${Math.abs(gainDb).toFixed(1)}`
-  const freqTag = `${Math.round(frequency / 1000)}k`
-
-  return `${baseName || 'mix'}-air-${gainTag}db-${freqTag}.wav`
-}
-
-
 export default function App() {
   const [dragActive, setDragActive] = useState(false)
   const [fileUrl, setFileUrl] = useState<string | null>(null)
@@ -813,7 +665,6 @@ export default function App() {
   const [leaderboardLast30, setLeaderboardLast30] = useState<LeaderboardEntry[]>([])
   const [leaderboardMessage, setLeaderboardMessage] = useState('')
   const [selectedGenre, setSelectedGenre] = useState<GenreProfileName>('Modern Pop')
-  const [selectedMasteringTarget, setSelectedMasteringTarget] = useState<MasteringTargetPreset>('-9.5')
   const [leaderboardLoading, setLeaderboardLoading] = useState(true)
   const analysisRef = useRef<HTMLElement | null>(null)
   const waveformApiRef = useRef<WaveformHandle | null>(null)
@@ -824,10 +675,6 @@ export default function App() {
   const [sectionMapDirty, setSectionMapDirty] = useState(false)
   const [sectionStartInput, setSectionStartInput] = useState('')
   const [sectionEndInput, setSectionEndInput] = useState('')
-  const [airRenderBusy, setAirRenderBusy] = useState(false)
-  const [airGainDb, setAirGainDb] = useState(1)
-  const [airFreq, setAirFreq] = useState(10000)
-  const [hasAudioBuffer, setHasAudioBuffer] = useState(false)
 
   const activeSectionIndex = useMemo(
     () => sections.findIndex((section) => section.id === activeSectionId),
@@ -911,8 +758,7 @@ export default function App() {
 
       const buffer = await decodeAudioFile(file)
       audioBufferRef.current = buffer
-      setHasAudioBuffer(true)
-      const autoSections = buildSections(buffer, undefined, currentGenreProfile(), [], [], masteringTargetValue(selectedMasteringTarget))
+      const autoSections = buildSections(buffer, undefined, currentGenreProfile())
       autoSectionsRef.current = autoSections
       const identity = await inferTrackIdentity(file)
       const durationSeconds = Math.round(buffer.duration || 0)
@@ -948,9 +794,9 @@ export default function App() {
 
       setSelectedGenre(loadedGenre)
       const nextSections = savedMap
-        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration), currentGenreProfile(loadedGenre), vocalOverridesFromSavedMap(savedMap), masteringModesFromSavedMap(savedMap), masteringTargetValue(selectedMasteringTarget))
-        : buildSections(buffer, undefined, currentGenreProfile(loadedGenre), [], [], masteringTargetValue(selectedMasteringTarget))
-      autoSectionsRef.current = buildSections(buffer, undefined, currentGenreProfile(loadedGenre), [], [], masteringTargetValue(selectedMasteringTarget))
+        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration), currentGenreProfile(loadedGenre), vocalOverridesFromSavedMap(savedMap))
+        : buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
+      autoSectionsRef.current = buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
       setSectionMapStatus(savedMap ? `Saved ${loadedGenre} map loaded` : `Genre - ${loadedGenre} loaded`)
       setSectionMapDirty(false)
 
@@ -1050,41 +896,6 @@ export default function App() {
   }
 
 
-  const handleRenderAir = async () => {
-    const sourceBuffer = audioBufferRef.current
-    if (!sourceBuffer || airRenderBusy) return
-
-    try {
-      setAirRenderBusy(true)
-      console.log('Rendering Air Contour', {
-        gainDb: airGainDb,
-        frequency: airFreq,
-        duration: sourceBuffer.duration,
-        channels: sourceBuffer.numberOfChannels,
-      })
-
-      const rendered = await renderAirContour(sourceBuffer, airGainDb, airFreq)
-      const wavBuffer = audioBufferToWav(rendered)
-      const blob = new Blob([wavBuffer], { type: 'audio/wav' })
-      const url = URL.createObjectURL(blob)
-
-      const link = document.createElement('a')
-      link.href = url
-      link.download = safeDownloadName(fileName, airGainDb, airFreq)
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-      alert('Air contour WAV rendered successfully')
-    } catch (err) {
-      console.error(err)
-      alert('Failed to render Air contour WAV. Check the browser console for details.')
-    } finally {
-      setAirRenderBusy(false)
-    }
-  }
-
     const overallScoreExact = sections.length
     ? sections.reduce((sum, section) => sum + section.score, 0) / sections.length
     : 0
@@ -1093,8 +904,11 @@ export default function App() {
 
   const bestSection = sections.length ? [...sections].sort((a, b) => b.score - a.score)[0] : null
   const opportunitySection = sections.length ? [...sections].sort((a, b) => a.score - b.score)[0] : null
-  const activeMetricInsight = activeSection ? activeSection.metricInsights[activeMetric] : null
-  const activeSectionUsesCuriosity = activeSection?.impactStrip?.key === 'curiosity'
+  useEffect(() => {
+    if (activeSectionIndex === 0 && activeMetric === 'impact') setActiveMetric('clarity')
+  }, [activeSectionIndex, activeMetric])
+
+  const activeMetricInsight = activeSection && !(activeSectionIndex === 0 && activeMetric === 'impact') ? activeSection.metricInsights[activeMetric] : null
 
   const recommendationTargetsByMetric: Record<keyof SectionAnalysis['metrics'], string[]> = {
     clarity: ['Overall mix', 'Instruments', 'Mix bus'],
@@ -1200,7 +1014,7 @@ export default function App() {
   const rebuildSectionsFromBoundaries = (boundaries: number[], preferredSectionId?: string | null, dirty = true, autoSave = false) => {
     const buffer = audioBufferRef.current
     if (!buffer) return [] as SectionAnalysis[]
-    const nextSections = buildSections(buffer, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections), masteringModesFromSections(sections), masteringTargetValue(selectedMasteringTarget))
+    const nextSections = buildSections(buffer, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections))
     setSections(nextSections)
     setSectionMapDirty(dirty)
     setSectionMapStatus(dirty ? 'Manual section map edited - auto-saving...' : 'Saved section map loaded')
@@ -1276,7 +1090,7 @@ export default function App() {
     if (!trackIdentity || !sectionsToSave.length) return
     try {
       setSectionMapStatus('Saving section map...')
-      await saveSectionMap(trackIdentity, sectionsToSave, selectedGenre, masteringTargetValue(selectedMasteringTarget))
+      await saveSectionMap(trackIdentity, sectionsToSave, selectedGenre)
       setSectionMapDirty(false)
       setSectionMapStatus('Saved section map')
     } catch (error) {
@@ -1291,7 +1105,7 @@ export default function App() {
     const boundaries = boundariesFromSections(sections)
     const overrides = vocalOverridesFromSections(sections)
     overrides[activeSectionIndex] = mode
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), overrides, masteringModesFromSections(sections), masteringTargetValue(selectedMasteringTarget))
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), overrides)
     setSections(nextSections)
     setActiveSectionId(nextSections[activeSectionIndex]?.id ?? activeSection.id)
     setSectionMapDirty(true)
@@ -1299,47 +1113,6 @@ export default function App() {
     autoSaveSectionMap(nextSections)
   }
 
-
-  const setActiveMasteringMode = (mode: MasteringMode) => {
-    if (!audioBufferRef.current || !activeSection || activeSectionIndex < 0) return
-    const boundaries = boundariesFromSections(sections)
-    const modes = masteringModesFromSections(sections)
-    modes[activeSectionIndex] = mode
-    const nextSections = buildSections(
-      audioBufferRef.current,
-      boundaries,
-      currentGenreProfile(),
-      vocalOverridesFromSections(sections),
-      modes,
-      masteringTargetValue(selectedMasteringTarget),
-    )
-    setSections(nextSections)
-    setActiveSectionId(nextSections[activeSectionIndex]?.id ?? activeSection.id)
-    setSectionMapDirty(true)
-    setSectionMapStatus('Manual mastering mode edited - auto-saving...')
-    autoSaveSectionMap(nextSections)
-  }
-
-  const setMasteringTargetPreset = (preset: MasteringTargetPreset) => {
-    setSelectedMasteringTarget(preset)
-    if (!audioBufferRef.current || !sections.length) return
-    const boundaries = boundariesFromSections(sections)
-    const nextSections = buildSections(
-      audioBufferRef.current,
-      boundaries,
-      currentGenreProfile(),
-      vocalOverridesFromSections(sections),
-      masteringModesFromSections(sections),
-      masteringTargetValue(preset),
-    )
-    setSections(nextSections)
-    if (activeSectionId && !nextSections.some((section) => section.id === activeSectionId)) {
-      setActiveSectionId(nextSections[activeSectionIndex]?.id ?? nextSections[0]?.id ?? null)
-    }
-    setSectionMapDirty(true)
-    setSectionMapStatus('Mastering target edited - auto-saving...')
-    autoSaveSectionMap(nextSections)
-  }
 
   const saveSelectedSectionTiming = async () => {
     const timingApplied = applySelectedSectionTiming()
@@ -1360,7 +1133,7 @@ export default function App() {
     if (activeSectionIndex > 0) boundaries[activeSectionIndex] = safeStart
     if (activeSectionIndex < sections.length - 1) boundaries[activeSectionIndex + 1] = safeEnd
 
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections), masteringModesFromSections(sections), masteringTargetValue(selectedMasteringTarget))
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections))
     await saveCurrentSectionMap(nextSections)
   }
 
@@ -1392,8 +1165,8 @@ export default function App() {
         ? boundariesFromSections(sections)
         : undefined
 
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(nextGenre), vocalOverridesFromSections(sections), masteringModesFromSections(sections), masteringTargetValue(selectedMasteringTarget))
-    const nextAutoSections = buildSections(audioBufferRef.current, undefined, currentGenreProfile(nextGenre), [], [], masteringTargetValue(selectedMasteringTarget))
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(nextGenre), vocalOverridesFromSections(sections))
+    const nextAutoSections = buildSections(audioBufferRef.current, undefined, currentGenreProfile(nextGenre))
     autoSectionsRef.current = nextAutoSections
 
     setSections(nextSections)
@@ -1511,49 +1284,7 @@ export default function App() {
             <span className="upload-subtitle">Stereo WAV works best, but MP3 and M4A work too. Uploads must be 1 to 15 minutes long. 48k / 24-bit WAV is perfect.</span>
           </label>
 
-          <div className="air-contour-lab">
-            <div className="air-contour-copy">
-              <span className="air-contour-title">Air Contour Lab</span>
-              <span className="air-contour-subtitle">Render a test WAV with a high-shelf air move, then re-upload it to compare scores.</span>
-            </div>
 
-            <div className="air-contour-controls">
-              <label className="air-contour-control">
-                <span>Gain</span>
-                <input
-                  type="range"
-                  min="-10"
-                  max="10"
-                  step="0.1"
-                  value={airGainDb}
-                  onChange={(event) => setAirGainDb(Number(event.target.value))}
-                />
-                <strong>{airGainDb.toFixed(1)} dB</strong>
-              </label>
-
-              <label className="air-contour-control">
-                <span>Freq</span>
-                <input
-                  type="range"
-                  min="6000"
-                  max="14000"
-                  step="100"
-                  value={airFreq}
-                  onChange={(event) => setAirFreq(Number(event.target.value))}
-                />
-                <strong>{Math.round(airFreq / 100) / 10} kHz</strong>
-              </label>
-
-              <button
-                className="air-contour-button"
-                type="button"
-                onClick={handleRenderAir}
-                disabled={!hasAudioBuffer || airRenderBusy}
-              >
-                {airRenderBusy ? 'Rendering…' : 'Render Air'}
-              </button>
-            </div>
-          </div>
         </div>
 
         <div className="leaderboard-inline-grid leaderboard-inline-grid-top">
@@ -1751,9 +1482,9 @@ export default function App() {
 
 
               <div className="metric-grid">
-                {METRIC_ORDER.map((name) => {
+                {METRIC_ORDER.filter((name) => name !== 'impact' || activeSectionIndex !== 0).map((name) => {
                   const value = activeSection.metrics[name]
-                  const label = name === 'impact' && activeSectionUsesCuriosity ? 'Curiosity' : metricLabel(name)
+                  const label = metricLabel(name)
                   return (
                     <button
                       key={name}
@@ -1777,24 +1508,6 @@ export default function App() {
                             <option value="auto">Auto</option>
                             <option value="vocal">Vocal</option>
                             <option value="instrumental">Instrumental</option>
-                          </select>
-                        ) : name === 'mastering' ? (
-                          <select
-                            className="vocal-override-card-select mastering-target-card-select"
-                            aria-label="Mastering loudness target"
-                            value={selectedMasteringTarget}
-                            onClick={(event) => event.stopPropagation()}
-                            onMouseDown={(event) => event.stopPropagation()}
-                            onChange={(event) => {
-                              event.stopPropagation()
-                              setMasteringTargetPreset(event.target.value as MasteringTargetPreset)
-                            }}
-                          >
-                            <option value="-14">-14</option>
-                            <option value="-11">-11</option>
-                            <option value="-9.5">-9.5</option>
-                            <option value="-8">-8</option>
-                            <option value="-7">-7</option>
                           </select>
                         ) : null}
                       </div>
@@ -1945,23 +1658,6 @@ export default function App() {
                   {activeMetric === 'mastering' && activeMasteringBands.length > 0 && (
                     <div className="level-balance-panel">
                       <div className="tonal-strip-card">
-                        <div className="mastering-controls-row">
-                          <label>
-                            Section role
-                            <select
-                              className="vocal-override-card-select mastering-mode-select"
-                              value={activeSection.masteringMode ?? 'auto'}
-                              onChange={(event) => setActiveMasteringMode(event.target.value as MasteringMode)}
-                            >
-                              <option value="auto">Auto</option>
-                              <option value="full">Full</option>
-                              <option value="build">Build</option>
-                              <option value="breakdown">Breakdown</option>
-                              <option value="outro">Outro/Quiet</option>
-                            </select>
-                          </label>
-                          <span>Global target: {masteringTargetValue(selectedMasteringTarget).toFixed(1)} LUFS</span>
-                        </div>
                         <div className="tonal-band-list">
                           {activeMasteringBands.map((item) => {
                             const readout = item.status === 'good' ? item.range : `${item.range} · ${Math.abs(item.displayPercent ?? item.deviationPercent)}% ${item.status}`
@@ -1981,13 +1677,13 @@ export default function App() {
                     </div>
                   )}
                   <div className="metric-detail-copy">
-                    <p><strong>What {activeMetric === 'clarity' ? 'Density' : (activeMetric === 'impact' && activeSectionUsesCuriosity ? 'Curiosity' : metricLabel(activeMetric))} means:</strong> {activeMetricInsight.meaning}</p>
+                    <p><strong>What {activeMetric === 'clarity' ? 'Density' : metricLabel(activeMetric)} means:</strong> {activeMetricInsight.meaning}</p>
                     <p><strong>What affects it here:</strong> {activeMetricInsight.influencedBy}</p>
                     <p><strong>Current read:</strong> {activeMetricInsight.currentRead}</p>
                   </div>
 
                   <div className="metric-description">
-                    {getMetricDescription(activeMetric === 'impact' && activeSectionUsesCuriosity ? 'curiosity' : activeMetric)}
+                    {getMetricDescription(activeMetric)}
                   </div>
                 </div>
               )}

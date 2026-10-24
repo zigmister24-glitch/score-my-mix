@@ -84,7 +84,6 @@ export interface MasteringMetrics {
 }
 
 export type VocalOverrideMode = 'auto' | 'vocal' | 'instrumental'
-export type MasteringMode = 'auto' | 'full' | 'build' | 'breakdown' | 'outro'
 
 export interface SectionAnalysis {
   id: string
@@ -105,7 +104,6 @@ export interface SectionAnalysis {
   impactStrip?: ImpactStrip
   widthBands?: BalanceStripItem[]
   vocalOverride?: VocalOverrideMode
-  masteringMode?: MasteringMode
   mastering?: MasteringMetrics
   masteringBands?: BalanceStripItem[]
 }
