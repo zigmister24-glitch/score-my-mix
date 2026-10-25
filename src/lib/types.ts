@@ -51,6 +51,7 @@ export interface BalanceStripItem {
 }
 
 export interface TonalBalanceBand extends BalanceStripItem {
+  deviationDb?: number
   key: 'weight' | 'body' | 'core' | 'air'
 }
 

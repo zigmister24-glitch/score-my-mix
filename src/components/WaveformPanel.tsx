@@ -19,6 +19,8 @@ interface WaveformPanelProps {
   onResetMap?: () => void
   sectionMapStatus?: string
   selectedGenre?: string
+  genreLabels?: Record<string, string>
+  onEditGenre?: () => void
   genreOptions?: string[]
   onGenreChange?: (genre: string) => void
 }
@@ -61,6 +63,8 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
   onResetMap,
   sectionMapStatus,
   selectedGenre,
+  genreLabels = {},
+  onEditGenre,
   genreOptions = [],
   onGenreChange,
 }: WaveformPanelProps, ref) {
@@ -229,6 +233,7 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
         </div>
         <div className="audio-controls">
           {sectionMapStatus ? <span className="section-map-status">{sectionMapStatus}</span> : null}
+          {onEditGenre && <button type="button" className="nav-button" onClick={onEditGenre}>Edit genre</button>}
           {selectedGenre && onGenreChange && genreOptions.length ? (
             <select
               className="waveform-genre-select"
@@ -238,7 +243,7 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
             >
               {genreOptions.map((genre) => (
                 <option key={genre} value={genre}>
-                  {`Genre - ${genre}`}
+                  {`Genre - ${genreLabels[genre] ?? genre}`}
                 </option>
               ))}
             </select>

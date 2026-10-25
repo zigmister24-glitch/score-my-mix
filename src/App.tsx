@@ -1,7 +1,8 @@
+import { BAND_KEYS, CUSTOM_IDS, CustomGenre, defaultCustomGenres, loadCustomGenres, persistCustomGenre } from './lib/customGenres'
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import WaveformPanel, { WaveformHandle } from './components/WaveformPanel'
 import { AnalysisGenreProfile, buildSections, decodeAudioFile, formatTime } from './lib/audioAnalysis'
-import { SectionAnalysis, VocalOverrideMode } from './lib/types'
+import { SectionAnalysis, VocalOverrideMode, ImpactStrip, BalanceStripItem } from './lib/types'
 
 function curveSliderPosition(deviationPercent: number, isMovement = false) {
   // Signed section-to-section movement: zero is centred, +/-32% reaches an edge.
@@ -80,6 +81,10 @@ const GENRE_PROFILES = {
   'Hip Hop / Rap': { tonal: { weight: 10, body: 2, core: -3, air: 2 }, density: { weight: 14, body: 10, core: -4, air: -2 }, densityWeights: { weight: 0.40, body: 0.33, core: 0.18, air: 0.09 }, vocals: 1 },
   'Singer Songwriter': { tonal: { weight: -3, body: 2, core: 5, air: 2 }, density: { weight: -6, body: 8, core: 6, air: 2 }, densityWeights: { weight: 0.14, body: 0.35, core: 0.36, air: 0.15 }, vocals: 2 },
   'Cinematic / Trailer': { tonal: { weight: 8, body: 6, core: -2, air: 1 }, density: { weight: 12, body: 20, core: -4, air: -4 }, densityWeights: { weight: 0.35, body: 0.42, core: 0.15, air: 0.08 }, vocals: 0 },
+  'User Defined 1': {},
+  'User Defined 2': {},
+  'User Defined 3': {},
+  'User Defined 4': {},
   'Scarlett Lullaby': { tonal: { weight: 14, body: 4, core: 2, air: 1 }, density: { weight: 14, body: 22, core: 4, air: -2 }, densityWeights: { weight: 0.34, body: 0.42, core: 0.16, air: 0.08 }, vocals: 2 },
 } as const satisfies Record<string, AnalysisGenreProfile>
 
@@ -691,7 +696,40 @@ export default function App() {
     setSectionMapStatus('Unsaved section timing')
   }
 
-  const currentGenreProfile = (genre = selectedGenre) => GENRE_PROFILES[genre]
+  const [customGenres, setCustomGenres] = useState<CustomGenre[]>(defaultCustomGenres)
+  const customGenresRef = useRef(customGenres)
+  const [genreEditor, setGenreEditor] = useState<CustomGenre | null>(null)
+  const [genreSaveBusy, setGenreSaveBusy] = useState(false)
+  const [genreError, setGenreError] = useState('')
+  const refreshCustomGenres = async () => {
+    const profiles = await loadCustomGenres(IS_LOCAL_DEV)
+    customGenresRef.current = profiles
+    setCustomGenres(profiles)
+  }
+  useEffect(() => { refreshCustomGenres().catch(error => setGenreError(error.message)) }, [])
+  const currentGenreProfile = (genre = selectedGenre): AnalysisGenreProfile => {
+    const custom = customGenresRef.current.find(profile => profile.id === genre)
+    return { ...GENRE_PROFILES[genre], ...(custom ? {tonalDb: custom.db} : {}) }
+  }
+  const saveGenreEditor = async () => {
+    if (!genreEditor || !genreEditor.name.trim() || !BAND_KEYS.every(key => Number.isFinite(genreEditor.db[key]) && Math.abs(genreEditor.db[key]) <= 12)) {
+      setGenreError('Enter a name and band values between -12 and +12 dB.'); return
+    }
+    setGenreSaveBusy(true); setGenreError('')
+    try {
+      const profile = {...genreEditor, name:genreEditor.name.trim()}
+      const next = customGenresRef.current.map(p => p.id === profile.id ? profile : p)
+      await persistCustomGenre(profile, customGenresRef.current, IS_LOCAL_DEV)
+      customGenresRef.current = next; setCustomGenres(next)
+      if (audioBufferRef.current) {
+        const nextSections = buildSections(audioBufferRef.current, boundariesFromSections(sections), currentGenreProfile(), vocalOverridesFromSections(sections))
+        setSections(nextSections)
+        autoSectionsRef.current = buildSections(audioBufferRef.current, undefined, currentGenreProfile())
+      }
+      setGenreEditor(null)
+    } catch (error) { setGenreError(error instanceof Error ? error.message : 'Save failed') }
+    finally {setGenreSaveBusy(false)}
+  }
 
   useEffect(() => {
     if (!activeSection) {
@@ -756,6 +794,7 @@ export default function App() {
       setFileUrl(nextUrl)
       setFileName(file.name)
 
+      await refreshCustomGenres()
       const buffer = await decodeAudioFile(file)
       audioBufferRef.current = buffer
       const autoSections = buildSections(buffer, undefined, currentGenreProfile())
@@ -865,7 +904,7 @@ export default function App() {
       setTrackPlaying(false)
     } catch (err) {
       console.error(err)
-      setError('Could not analyse that file. Try a WAV, MP3, or M4A export from your DAW or bounce app.')
+      setError(err instanceof Error && err.message.includes('genre profiles') ? err.message : 'Could not analyse that file. Try a WAV, MP3, or M4A export from your DAW or bounce app.')
     } finally {
       setIsLoading(false)
     }
@@ -933,7 +972,7 @@ export default function App() {
     : metricRecommendations.filter((recommendation) => recommendation.priority === 'Worth exploring' || recommendation.priority === 'Optional polish')
   const displayedRecommendationMode = highImpactMetricRecommendations.length ? 'Top recommendations' : 'Worth exploring'
 
-  const makeLocalStripItem = (key: string, label: string, range: string, deviationPercent: number, action: string) => {
+  const makeLocalStripItem = (key: string, label: string, range: string, deviationPercent: number, action: string): BalanceStripItem => {
     const rounded = Math.round(Math.max(-28, Math.min(28, deviationPercent)))
     const abs = Math.abs(rounded)
     const status = abs <= 10 ? 'good' : rounded < 0 ? 'low' : 'high'
@@ -1151,6 +1190,7 @@ export default function App() {
 
 
   const handleGenreChange = async (nextGenre: GenreProfileName) => {
+    setGenreEditor(null)
     setSelectedGenre(nextGenre)
     if (!trackIdentity || !audioBufferRef.current) return
 
@@ -1414,10 +1454,23 @@ export default function App() {
             onResetMap={resetSectionMap}
             sectionMapStatus={`${sectionMapStatus}${sectionMapDirty ? ' *' : ''}`}
             selectedGenre={selectedGenre}
-            genreOptions={Object.keys(GENRE_PROFILES) as GenreProfileName[]}
+            genreOptions={Object.keys(GENRE_PROFILES)}
+            genreLabels={Object.fromEntries(customGenres.map(p => [p.id, p.name]))}
+            onEditGenre={CUSTOM_IDS.includes(selectedGenre) ? () => {setGenreError(''); setGenreEditor(structuredClone(customGenresRef.current.find(p => p.id === selectedGenre)!))} : undefined}
             onGenreChange={handleGenreChange}
           />
 
+          {genreError && <p role="alert">{genreError}</p>}
+          {genreEditor && <form className="panel genre-editor" onSubmit={event => {event.preventDefault(); void saveGenreEditor()}}>
+            <h3>Edit genre profile</h3>
+            <p>Band targets in dB relative to Modern Pop. Targets are normalised together; these settings do not apply EQ to your audio. Saved profiles are shared across browsers.</p>
+            <label>Name <input required maxLength={80} value={genreEditor.name} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,name:e.target.value})} /></label>
+            <div className="genre-editor-bands">{BAND_KEYS.map(key => <label key={key}>{({weight:'Weight',body:'Body',core:'Core',air:'Air'})[key]} (dB)
+              <input type="number" required min={-12} max={12} step="any" value={Number.isNaN(genreEditor.db[key]) ? '' : genreEditor.db[key]} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,db:{...genreEditor.db,[key]:e.target.valueAsNumber}})} />
+            </label>)}</div>
+            <button type="submit" className="nav-button" disabled={genreSaveBusy}>{genreSaveBusy ? 'Saving…' : 'Save profile'}</button>
+            <button type="button" className="nav-button" disabled={genreSaveBusy} onClick={() => {setGenreEditor(null);setGenreError('')}}>Cancel</button>
+          </form>}
           <section className="content-grid" ref={analysisRef}>
             <article className="panel analysis-panel">
               <div className="panel-header spaced selected-header">
@@ -1528,7 +1581,8 @@ export default function App() {
                           {activeTonalBands.map((band) => {
                             const position = Math.max(6, Math.min(94, 50 + band.deviationPercent * 2.2))
                             const displayValue = Math.abs(band.displayPercent ?? band.deviationPercent)
-                            const readout = band.status === 'good' ? 'Good' : `${displayValue}% ${band.status}`
+                            const db = band.deviationDb ?? 0
+                            const readout = `${db > 0 ? '+' : ''}${db.toFixed(1)} dB${band.status === 'good' ? ' · Good' : db < 0 ? ' · Below target' : ' · Above target'}`
                             return (
                               <button
                                 className={`tonal-band-row tonal-${band.severity}`}

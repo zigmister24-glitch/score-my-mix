@@ -1,6 +1,7 @@
-import { BalanceStripItem, ImpactStrip, Recommendation, SectionAnalysis, SectionMetrics, TonalBalanceBand, MasteringMetrics } from './types'
+import { BalanceStripItem, ImpactStrip, Recommendation, SectionAnalysis, SectionMetrics, TonalBalanceBand, MasteringMetrics, VocalOverrideMode } from './types'
 
 export type AnalysisGenreProfile = {
+  tonalDb?: { weight: number; body: number; core: number; air: number }
   tonal?: {
     weight?: number
     body?: number
@@ -699,7 +700,7 @@ function makeTonalBand(key: TonalBalanceBand['key'], label: string, range: strin
   const action = status === 'good' ? `${label} is sitting well. Protect it while fixing bigger bands.` : status === 'low' ? actionLow : actionHigh
   // v0.82: keep the dot/slider based on the real tonal deviation, but show
   // only the amount outside the healthy +/-10% window in the readout.
-  return { key, label, range, deviationPercent, displayPercent: excessPercent, status, severity, action }
+  return { key, label, range, deviationPercent, displayPercent: excessPercent, deviationDb: 20 * Math.log10(Math.max(0.000001, share) / Math.max(0.000001, target)), status, severity, action }
 }
 
 function buildTonalBalanceBands(samples: Float32Array, sampleRate: number, startIndex: number, endIndex: number, genreProfile?: AnalysisGenreProfile): TonalBalanceBand[] {
@@ -709,10 +710,10 @@ function buildTonalBalanceBands(samples: Float32Array, sampleRate: number, start
   const high = bandpassRms(samples, sampleRate, startIndex, endIndex, 8500, 0.7)
   const total = Math.max(0.0001, low + lowMid + mid + high)
   const targets = normalizeTargets({
-    weight: shiftedTarget(0.28, genreProfile?.tonal?.weight),
-    body: shiftedTarget(0.24, genreProfile?.tonal?.body),
-    core: shiftedTarget(0.32, genreProfile?.tonal?.core),
-    air: shiftedTarget(0.16, genreProfile?.tonal?.air),
+    weight: genreProfile?.tonalDb ? 0.28 * 10 ** (genreProfile.tonalDb.weight / 20) : shiftedTarget(0.28, genreProfile?.tonal?.weight),
+    body: genreProfile?.tonalDb ? 0.24 * 10 ** (genreProfile.tonalDb.body / 20) : shiftedTarget(0.24, genreProfile?.tonal?.body),
+    core: genreProfile?.tonalDb ? 0.32 * 10 ** (genreProfile.tonalDb.core / 20) : shiftedTarget(0.32, genreProfile?.tonal?.core),
+    air: genreProfile?.tonalDb ? 0.16 * 10 ** (genreProfile.tonalDb.air / 20) : shiftedTarget(0.16, genreProfile?.tonal?.air),
   })
 
   return [
@@ -2068,7 +2069,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
               priority: 'Worth exploring',
               estimatedLift: '+1 to +3 impact',
               target: 'Drums',
-            }]),
+            }] satisfies Recommendation[]),
       width < 80
         ? {
             title: width < 70 ? 'Create clearer width contrast first' : 'Add a subtle width movement',
