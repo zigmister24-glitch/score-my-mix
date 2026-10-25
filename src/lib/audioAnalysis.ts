@@ -76,14 +76,30 @@ function densityTargets(genreProfile?: AnalysisGenreProfile) {
   })
 }
 
-function averageAbs(samples: Float32Array, start: number, end: number) {
+// Keep channels separate through filtering, then combine power. A mono sum
+// would cancel out-of-phase content and a single channel would bias pan moves.
+type AnalysisSamples = Float32Array | Float32Array[]
+function analysisChannels(buffer: AudioBuffer): Float32Array[] {
+  return Array.from({length: buffer.numberOfChannels}, (_, index) => buffer.getChannelData(index))
+}
+function combineChannelPower(channels: Float32Array[], measure: (channel: Float32Array) => number): number {
+  return Math.sqrt(channels.reduce((sum, channel) => sum + measure(channel) ** 2, 0) / Math.max(1, channels.length))
+}
+
+function averageAbs(samples: AnalysisSamples, start: number, end: number): number {
+  if (Array.isArray(samples)) return combineChannelPower(samples, channel => averageAbs(channel, start, end))
   let sum = 0
   const count = Math.max(1, end - start)
   for (let i = start; i < end; i += 1) sum += Math.abs(samples[i])
   return sum / count
 }
 
-function zeroCrossingRate(samples: Float32Array, start: number, end: number) {
+function zeroCrossingRate(samples: AnalysisSamples, start: number, end: number): number {
+  if (Array.isArray(samples)) {
+    const powers = samples.map(channel => rms(channel, start, end) ** 2)
+    const total = powers.reduce((sum, value) => sum + value, 0)
+    return total > 0 ? samples.reduce((sum, channel, i) => sum + zeroCrossingRate(channel, start, end) * powers[i], 0) / total : 0
+  }
   let zeroCrossings = 0
   for (let i = start + 1; i < end; i += 1) {
     const prev = samples[i - 1]
@@ -93,7 +109,8 @@ function zeroCrossingRate(samples: Float32Array, start: number, end: number) {
   return zeroCrossings / Math.max(1, end - start)
 }
 
-function rms(samples: Float32Array, start: number, end: number) {
+function rms(samples: AnalysisSamples, start: number, end: number): number {
+  if (Array.isArray(samples)) return combineChannelPower(samples, channel => rms(channel, start, end))
   let sum = 0
   const count = Math.max(1, end - start)
   for (let i = start; i < end; i += 1) {
@@ -376,7 +393,8 @@ function median(values: number[]) {
     : sorted[middle]
 }
 
-function bandpassRms(samples: Float32Array, sampleRate: number, start: number, end: number, frequency: number, q = 1) {
+function bandpassRms(samples: AnalysisSamples, sampleRate: number, start: number, end: number, frequency: number, q = 1): number {
+  if (Array.isArray(samples)) return combineChannelPower(samples, channel => bandpassRms(channel, sampleRate, start, end, frequency, q))
   const w0 = (2 * Math.PI * frequency) / sampleRate
   const alpha = Math.sin(w0) / (2 * q)
   const cosW0 = Math.cos(w0)
@@ -411,7 +429,7 @@ function bandpassRms(samples: Float32Array, sampleRate: number, start: number, e
   return Math.sqrt(sum / count)
 }
 
-function transientFlux(samples: Float32Array, sampleRate: number, start: number, end: number) {
+function transientFlux(samples: AnalysisSamples, sampleRate: number, start: number, end: number) {
   const frameSize = Math.max(256, Math.floor(sampleRate * 0.023))
   let previous = 0
   let positiveFlux = 0
@@ -621,17 +639,17 @@ function mergeTightBoundaries(boundaries: number[], minLengthSeconds: number, du
 }
 
 function detectSectionBoundaries(buffer: AudioBuffer) {
-  const samples = buffer.getChannelData(0)
+  const samples = analysisChannels(buffer)
   const sampleRate = buffer.sampleRate
   const frameSeconds = 0.75
   const frameSize = Math.max(512, Math.floor(sampleRate * frameSeconds))
-  const totalFrames = Math.max(1, Math.floor(samples.length / frameSize))
+  const totalFrames = Math.max(1, Math.floor(buffer.length / frameSize))
   const energies: number[] = []
   const zcrs: number[] = []
 
   for (let frame = 0; frame < totalFrames; frame += 1) {
     const start = frame * frameSize
-    const end = Math.min(samples.length, start + frameSize)
+    const end = Math.min(buffer.length, start + frameSize)
     energies.push(averageAbs(samples, start, end))
     zcrs.push(zeroCrossingRate(samples, start, end))
   }
@@ -703,7 +721,7 @@ function makeTonalBand(key: TonalBalanceBand['key'], label: string, range: strin
   return { key, label, range, deviationPercent, displayPercent: excessPercent, deviationDb: 20 * Math.log10(Math.max(0.000001, share) / Math.max(0.000001, target)), status, severity, action }
 }
 
-function buildTonalBalanceBands(samples: Float32Array, sampleRate: number, startIndex: number, endIndex: number, genreProfile?: AnalysisGenreProfile): TonalBalanceBand[] {
+function buildTonalBalanceBands(samples: AnalysisSamples, sampleRate: number, startIndex: number, endIndex: number, genreProfile?: AnalysisGenreProfile): TonalBalanceBand[] {
   const low = bandpassRms(samples, sampleRate, startIndex, endIndex, 70, 0.75)
   const lowMid = bandpassRms(samples, sampleRate, startIndex, endIndex, 220, 0.85)
   const mid = bandpassRms(samples, sampleRate, startIndex, endIndex, 1050, 0.85)
@@ -960,7 +978,7 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
 }
 
 function buildClarityBands(
-  samples: Float32Array,
+  samples: AnalysisSamples,
   sampleRate: number,
   startIndex: number,
   endIndex: number,
@@ -1193,12 +1211,12 @@ function normaliseCustomBoundaries(boundaries: number[], duration: number) {
 }
 
 export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile, vocalOverrides: VocalOverrideMode[] = []): SectionAnalysis[] {
-  const channel = buffer.getChannelData(0)
+  const channel = analysisChannels(buffer)
   const sampleRate = buffer.sampleRate
   const boundaries = customBoundaries?.length
     ? normaliseCustomBoundaries(customBoundaries, buffer.duration)
     : detectSectionBoundaries(buffer)
-  const globalEnergy = averageAbs(channel, 0, channel.length)
+  const globalEnergy = averageAbs(channel, 0, buffer.length)
   const masteringGain = masteringCalibrationGain(buffer)
   const vocalScan = boundaries.slice(0, -1).map((start, index) => {
     const sectionStart = Math.floor(start * sampleRate)
