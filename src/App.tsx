@@ -1470,7 +1470,8 @@ export default function App() {
             <p>Band targets in dB relative to Modern Pop. Targets are normalised together; these settings do not apply EQ to your audio. Saved profiles are shared across browsers.</p>
             <label>Name <input required maxLength={80} value={genreEditor.name} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,name:e.target.value})} /></label>
             <div className="genre-editor-bands">{BAND_KEYS.map(key => <label key={key}>{({weight:'Weight',body:'Body',core:'Core',air:'Air'})[key]} (dB)
-              <input type="number" required min={-12} max={12} step="any" value={Number.isNaN(genreEditor.db[key]) ? '' : genreEditor.db[key]} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,db:{...genreEditor.db,[key]:e.target.valueAsNumber}})} />
+              <input type="number" required min={-12} max={12} step="0.01" value={Number.isNaN(genreEditor.db[key]) ? '' : Math.round(genreEditor.db[key] * 100) / 100} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,db:{...genreEditor.db,[key]:e.target.valueAsNumber}})} />
+              <small>{Number.isFinite(genreEditor.db[key]) ? `${genreEditor.db[key] > 0 ? '+' : genreEditor.db[key] < 0 ? '−' : ''}${Math.abs(genreEditor.db[key]).toFixed(2)} dB ${genreEditor.db[key] > 0 ? 'above Modern Pop' : genreEditor.db[key] < 0 ? 'below Modern Pop' : '— matches Modern Pop'}` : 'Enter a dB offset'}</small>
             </label>)}</div>
             <button type="submit" className="nav-button" disabled={genreSaveBusy}>{genreSaveBusy ? 'Saving…' : 'Save profile'}</button>
             <button type="button" className="nav-button" disabled={genreSaveBusy} onClick={() => {setGenreEditor(null);setGenreError('')}}>Cancel</button>
