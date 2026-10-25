@@ -705,6 +705,7 @@ export default function App() {
     const profiles = await loadCustomGenres(IS_LOCAL_DEV)
     customGenresRef.current = profiles
     setCustomGenres(profiles)
+    setGenreError('')
   }
   useEffect(() => { refreshCustomGenres().catch(error => setGenreError(error.message)) }, [])
   const currentGenreProfile = (genre = selectedGenre): AnalysisGenreProfile => {
@@ -794,7 +795,10 @@ export default function App() {
       setFileUrl(nextUrl)
       setFileName(file.name)
 
-      await refreshCustomGenres()
+      try { await refreshCustomGenres() }
+      catch (error) {
+        setGenreError(`${error instanceof Error ? error.message : 'Could not load genre profiles.'} Analysis is using the currently loaded profiles (built-in defaults if none have loaded).`)
+      }
       const buffer = await decodeAudioFile(file)
       audioBufferRef.current = buffer
       const autoSections = buildSections(buffer, undefined, currentGenreProfile())
