@@ -1211,7 +1211,7 @@ function normaliseCustomBoundaries(boundaries: number[], duration: number) {
   return result.length >= 2 ? result : [0, duration]
 }
 
-export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile, vocalOverrides: VocalOverrideMode[] = []): SectionAnalysis[] {
+export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile, vocalOverrides: VocalOverrideMode[] = [], impactIgnores: boolean[] = []): SectionAnalysis[] {
   const channel = analysisChannels(buffer)
   const sampleRate = buffer.sampleRate
   const boundaries = customBoundaries?.length
@@ -1413,6 +1413,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       100,
     )
 
+    const impactIgnored = impactIgnores[i] === true
     const impact = normalImpact
     const impactStrip = rawImpactStrip
     const coreStereoSeparation = buffer.numberOfChannels >= 2
@@ -1992,7 +1993,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const metrics = { clarity, impact, tonalBalance, width, drumsVsEverything, vocalLevel, mastering: masteringScore }
     // Match the section score to visible cards, but skip Vocal when a section
     // is likely an intro, outro, instrumental, or breakdown with no vocal anchor.
-    const visibleCardScores = [clarity, ...(i === 0 ? [] : [impact]), tonalBalance, width, masteringScore, ...(vocalLevel == null ? [] : [vocalLevel])]
+    const visibleCardScores = [clarity, ...(i === 0 || impactIgnored ? [] : [impact]), tonalBalance, width, masteringScore, ...(vocalLevel == null ? [] : [vocalLevel])]
     const scoreExact = visibleCardScores.reduce((sum, value) => sum + Math.round(value), 0) / visibleCardScores.length
     const score = Math.round(scoreExact)
 
@@ -2001,7 +2002,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
         title: 'Density is working in your favour',
         detail: 'The atmosphere already feels like part of the song rather than a random accident.',
       },
-      ...(i === 0 ? [] : [{
+      ...(i === 0 || impactIgnored ? [] : [{
         title: impact >= 74 ? 'Impact feels confident' : 'Dynamics feel controlled',
         detail: impact >= 74
           ? 'This section carries enough forward motion to feel rewarding.'
@@ -2073,7 +2074,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
               target: 'Vocal',
             },
       primaryTonalRecommendation(tonalBalanceBands, tonalBalance),
-      ...(i === 0 ? [] : [impact < 75
+      ...(i === 0 || impactIgnored ? [] : [impact < 75
           ? {
               title: 'Make the hit feel more obvious',
               detail: impact < 68
@@ -2130,6 +2131,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       recommendations,
       metrics,
       vocalOverride,
+      impactIgnored,
       metricInsights: buildMetricInsights(metrics, recommendations, mastering),
       tonalBalanceBands,
       clarityBands,

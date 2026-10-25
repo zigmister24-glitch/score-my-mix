@@ -117,6 +117,7 @@ type SavedSectionMapItem = {
   start: number
   end: number
   label?: string
+  impactIgnored?: boolean
   vocalOverride?: VocalOverrideMode
 }
 
@@ -429,6 +430,7 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
         end: Number(savedEnd.toFixed(3)),
         label: section.label,
         vocalOverride: section.vocalOverride ?? 'auto',
+        impactIgnored: section.impactIgnored === true,
       }
     }),
   }
@@ -535,6 +537,10 @@ function boundariesFromSectionMap(map: SavedSectionMap, durationSeconds: number)
 function boundariesFromSections(sections: SectionAnalysis[]) {
   if (!sections.length) return []
   return [sections[0].start, ...sections.map((section) => section.end)]
+}
+
+function impactIgnoresFromSections(sections: Array<{impactIgnored?: boolean}>): boolean[] {
+  return sections.map(section => section.impactIgnored === true)
 }
 
 function vocalOverridesFromSections(sections: SectionAnalysis[]): VocalOverrideMode[] {
@@ -725,7 +731,7 @@ export default function App() {
       await persistCustomGenre(profile, customGenresRef.current, IS_LOCAL_DEV)
       customGenresRef.current = next; setCustomGenres(next)
       if (audioBufferRef.current) {
-        const nextSections = buildSections(audioBufferRef.current, boundariesFromSections(sections), currentGenreProfile(), vocalOverridesFromSections(sections))
+        const nextSections = buildSections(audioBufferRef.current, boundariesFromSections(sections), currentGenreProfile(), vocalOverridesFromSections(sections), impactIgnoresFromSections(sections))
         setSections(nextSections)
         autoSectionsRef.current = buildSections(audioBufferRef.current, undefined, currentGenreProfile())
       }
@@ -839,7 +845,7 @@ export default function App() {
 
       setSelectedGenre(loadedGenre)
       const nextSections = savedMap
-        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration), currentGenreProfile(loadedGenre), vocalOverridesFromSavedMap(savedMap))
+        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration), currentGenreProfile(loadedGenre), vocalOverridesFromSavedMap(savedMap), impactIgnoresFromSections(savedMap.sections))
         : buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
       autoSectionsRef.current = buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
       setSectionMapStatus(savedMap ? `Saved ${loadedGenre} map loaded` : `Genre - ${loadedGenre} loaded`)
@@ -953,7 +959,7 @@ export default function App() {
     if (activeSectionIndex === 0 && activeMetric === 'impact') setActiveMetric('clarity')
   }, [activeSectionIndex, activeMetric])
 
-  const activeMetricInsight = activeSection && !(activeSectionIndex === 0 && activeMetric === 'impact') ? activeSection.metricInsights[activeMetric] : null
+  const activeMetricInsight = activeSection && !(activeMetric === 'impact' && (activeSectionIndex === 0 || activeSection.impactIgnored)) ? activeSection.metricInsights[activeMetric] : null
 
   const recommendationTargetsByMetric: Record<keyof SectionAnalysis['metrics'], string[]> = {
     clarity: ['Overall mix', 'Instruments', 'Mix bus'],
@@ -1059,7 +1065,11 @@ export default function App() {
   const rebuildSectionsFromBoundaries = (boundaries: number[], preferredSectionId?: string | null, dirty = true, autoSave = false) => {
     const buffer = audioBufferRef.current
     if (!buffer) return [] as SectionAnalysis[]
-    const nextSections = buildSections(buffer, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections))
+    const mappedIgnores = boundaries.slice(0, -1).map((start, i) => {
+      const midpoint = (start + boundaries[i + 1]) / 2
+      return sections.find(section => midpoint >= section.start && midpoint < section.end)?.impactIgnored === true
+    })
+    const nextSections = buildSections(buffer, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections), mappedIgnores)
     setSections(nextSections)
     setSectionMapDirty(dirty)
     setSectionMapStatus(dirty ? 'Manual section map edited - auto-saving...' : 'Saved section map loaded')
@@ -1145,12 +1155,23 @@ export default function App() {
   }
 
 
+  const setActiveImpactIgnored = (ignored: boolean) => {
+    if (!audioBufferRef.current || !activeSection || activeSectionIndex < 0) return
+    const overrides = impactIgnoresFromSections(sections)
+    overrides[activeSectionIndex] = ignored
+    const nextSections = buildSections(audioBufferRef.current, boundariesFromSections(sections), currentGenreProfile(), vocalOverridesFromSections(sections), overrides)
+    setSections(nextSections)
+    setActiveSectionId(nextSections[activeSectionIndex]?.id ?? activeSection.id)
+    setSectionMapDirty(true)
+    autoSaveSectionMap(nextSections)
+  }
+
   const setActiveVocalOverride = (mode: VocalOverrideMode) => {
     if (!audioBufferRef.current || !activeSection || activeSectionIndex < 0) return
     const boundaries = boundariesFromSections(sections)
     const overrides = vocalOverridesFromSections(sections)
     overrides[activeSectionIndex] = mode
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), overrides)
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), overrides, impactIgnoresFromSections(sections))
     setSections(nextSections)
     setActiveSectionId(nextSections[activeSectionIndex]?.id ?? activeSection.id)
     setSectionMapDirty(true)
@@ -1178,7 +1199,7 @@ export default function App() {
     if (activeSectionIndex > 0) boundaries[activeSectionIndex] = safeStart
     if (activeSectionIndex < sections.length - 1) boundaries[activeSectionIndex + 1] = safeEnd
 
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections))
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections), impactIgnoresFromSections(sections))
     await saveCurrentSectionMap(nextSections)
   }
 
@@ -1211,7 +1232,7 @@ export default function App() {
         ? boundariesFromSections(sections)
         : undefined
 
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(nextGenre), vocalOverridesFromSections(sections))
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(nextGenre), savedMap ? vocalOverridesFromSavedMap(savedMap) : vocalOverridesFromSections(sections), savedMap ? impactIgnoresFromSections(savedMap.sections) : impactIgnoresFromSections(sections))
     const nextAutoSections = buildSections(audioBufferRef.current, undefined, currentGenreProfile(nextGenre))
     autoSectionsRef.current = nextAutoSections
 
@@ -1552,7 +1573,7 @@ export default function App() {
 
               <div className="metric-grid">
                 {METRIC_ORDER.filter((name) => name !== 'impact' || activeSectionIndex !== 0).map((name) => {
-                  const value = activeSection.metrics[name]
+                  const value = name === 'impact' && activeSection.impactIgnored ? null : activeSection.metrics[name]
                   const label = metricLabel(name)
                   return (
                     <button
@@ -1577,6 +1598,14 @@ export default function App() {
                             <option value="auto">Auto</option>
                             <option value="vocal">Vocal</option>
                             <option value="instrumental">Instrumental</option>
+                          </select>
+                        ) : name === 'impact' ? (
+                          <select className="vocal-override-card-select" aria-label="Impact scoring mode"
+                            value={activeSection.impactIgnored ? 'ignore' : 'score'}
+                            onClick={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()}
+                            onChange={event => {event.stopPropagation(); setActiveImpactIgnored(event.target.value === 'ignore')}}>
+                            <option value="score">Score Impact</option>
+                            <option value="ignore">Ignore Impact</option>
                           </select>
                         ) : null}
                       </div>
