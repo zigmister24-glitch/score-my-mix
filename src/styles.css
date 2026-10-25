@@ -1201,23 +1201,17 @@ button, input { font: inherit; }
 .genre-editor-bands { display: grid; grid-template-columns: repeat(auto-fit,minmax(140px,1fr)); gap: 16px; margin: 18px 0; }
 .genre-editor button { margin-right: 10px; }
 
-/* Perfect scores get their own electric cyan finish, distinct from 95–99%. */
-.metric-grid .metric-card.perfect-score,
-.metric-grid .metric-card.perfect-score.active,
+/* Only perfect track-map scores get the rose-pink celebration finish. */
 .section-chip.perfect-score,
 .section-chip.perfect-score.active {
-  border-color: #67faff;
-  background: linear-gradient(135deg, #083c54, #096477 55%, #164458);
-  box-shadow: 0 0 20px rgba(34, 211, 238, 0.42), inset 0 0 0 1px rgba(165, 243, 252, 0.3);
+  border-color: #ff8bc8;
+  background: linear-gradient(135deg, #76244e, #a62f70 55%, #713065);
+  box-shadow: 0 0 18px rgba(255, 105, 180, 0.35), inset 0 0 0 1px rgba(255, 193, 224, 0.25);
 }
-.metric-grid .metric-card.perfect-score.active,
 .section-chip.perfect-score.active {
-  box-shadow: 0 0 28px rgba(34, 211, 238, 0.6), inset 0 0 0 2px #b7ffff;
+  box-shadow: 0 0 24px rgba(255, 105, 180, 0.5), inset 0 0 0 2px #ffd1e8;
 }
-.metric-grid .metric-card.perfect-score span { color: #d6ffff; }
-.metric-grid .metric-card.perfect-score strong,
-.section-chip.perfect-score .chip-score { color: #fff; text-shadow: 0 0 12px rgba(103, 250, 255, 0.65); }
-.metric-grid .metric-card.perfect-score .mini-bar-fill {
-  background: linear-gradient(90deg, #22d3ee, #a5f3fc, #fff);
-  box-shadow: 0 0 12px rgba(103, 250, 255, 0.55);
+.section-chip.perfect-score .chip-score {
+  color: #fff;
+  text-shadow: 0 0 10px rgba(255, 193, 224, 0.5);
 }

@@ -1557,7 +1557,7 @@ export default function App() {
                   return (
                     <button
                       key={name}
-                      className={`metric-card clickable ${value === 100 ? 'perfect-score' : ''} ${activeMetric === name ? 'active' : ''} ${isMetricAvailable(value) ? scoreTone(value) : 'standard'} ${!isMetricAvailable(value) ? 'metric-na' : ''}`}
+                      className={`metric-card clickable ${activeMetric === name ? 'active' : ''} ${isMetricAvailable(value) ? scoreTone(value) : 'standard'} ${!isMetricAvailable(value) ? 'metric-na' : ''}`}
                       onClick={() => setActiveMetric(name)}
                     >
                       <div className="metric-card-topline">
