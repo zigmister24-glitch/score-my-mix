@@ -699,6 +699,7 @@ export default function App() {
   const [customGenres, setCustomGenres] = useState<CustomGenre[]>(defaultCustomGenres)
   const customGenresRef = useRef(customGenres)
   const [genreEditor, setGenreEditor] = useState<CustomGenre | null>(null)
+  const genreReadOnly = genreEditor != null && !CUSTOM_IDS.includes(genreEditor.id)
   const [genreSaveBusy, setGenreSaveBusy] = useState(false)
   const [genreError, setGenreError] = useState('')
   const refreshCustomGenres = async () => {
@@ -713,6 +714,7 @@ export default function App() {
     return { ...GENRE_PROFILES[genre], ...(custom ? {tonalDb: custom.db} : {}) }
   }
   const saveGenreEditor = async () => {
+    if (genreReadOnly) return
     if (!genreEditor || !genreEditor.name.trim() || !BAND_KEYS.every(key => Number.isFinite(genreEditor.db[key]) && Math.abs(genreEditor.db[key]) <= 12)) {
       setGenreError('Enter a name and band values between -12 and +12 dB.'); return
     }
@@ -1460,21 +1462,30 @@ export default function App() {
             selectedGenre={selectedGenre}
             genreOptions={Object.keys(GENRE_PROFILES)}
             genreLabels={Object.fromEntries(customGenres.map(p => [p.id, p.name]))}
-            onEditGenre={CUSTOM_IDS.includes(selectedGenre) ? () => {setGenreError(''); setGenreEditor(structuredClone(customGenresRef.current.find(p => p.id === selectedGenre)!))} : undefined}
+            onEditGenre={() => {
+              setGenreError('')
+              const custom = customGenresRef.current.find(p => p.id === selectedGenre)
+              if (custom) setGenreEditor(structuredClone(custom))
+              else {
+                const profile: AnalysisGenreProfile = GENRE_PROFILES[selectedGenre]
+                setGenreEditor({id:selectedGenre, name:selectedGenre, db:Object.fromEntries(BAND_KEYS.map(key => [key,20 * Math.log10(1 + (profile.tonal?.[key] ?? 0) / 100)])) as CustomGenre['db']})
+              }
+            }}
             onGenreChange={handleGenreChange}
           />
 
           {genreError && <p role="alert">{genreError}</p>}
           {genreEditor && <form className="panel genre-editor" onSubmit={event => {event.preventDefault(); void saveGenreEditor()}}>
-            <h3>Edit genre profile</h3>
+            <h3>{genreReadOnly ? 'Genre profile — read only' : 'Edit genre profile'}</h3>
             <p>Band targets in dB relative to Modern Pop. Targets are normalised together; these settings do not apply EQ to your audio. Saved profiles are shared across browsers.</p>
-            <label>Name <input required maxLength={80} value={genreEditor.name} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,name:e.target.value})} /></label>
+            {genreReadOnly && <p>This is a built-in reference profile. Use a User Defined genre to create your own targets.</p>}
+            <label>Name <input readOnly={genreReadOnly} required maxLength={80} value={genreEditor.name} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,name:e.target.value})} /></label>
             <div className="genre-editor-bands">{BAND_KEYS.map(key => <label key={key}>{({weight:'Weight',body:'Body',core:'Core',air:'Air'})[key]} (dB)
-              <input type="number" required min={-12} max={12} step="0.01" value={Number.isNaN(genreEditor.db[key]) ? '' : Math.round(genreEditor.db[key] * 100) / 100} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,db:{...genreEditor.db,[key]:e.target.valueAsNumber}})} />
+              <input type="number" readOnly={genreReadOnly} required min={-12} max={12} step="0.01" value={Number.isNaN(genreEditor.db[key]) ? '' : Math.round(genreEditor.db[key] * 100) / 100} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,db:{...genreEditor.db,[key]:e.target.valueAsNumber}})} />
               <small>{Number.isFinite(genreEditor.db[key]) ? `${genreEditor.db[key] > 0 ? '+' : genreEditor.db[key] < 0 ? '−' : ''}${Math.abs(genreEditor.db[key]).toFixed(2)} dB ${genreEditor.db[key] > 0 ? 'above Modern Pop' : genreEditor.db[key] < 0 ? 'below Modern Pop' : '— matches Modern Pop'}` : 'Enter a dB offset'}</small>
             </label>)}</div>
-            <button type="submit" className="nav-button" disabled={genreSaveBusy}>{genreSaveBusy ? 'Saving…' : 'Save profile'}</button>
-            <button type="button" className="nav-button" disabled={genreSaveBusy} onClick={() => {setGenreEditor(null);setGenreError('')}}>Cancel</button>
+            {!genreReadOnly && <button type="submit" className="nav-button" disabled={genreSaveBusy}>{genreSaveBusy ? 'Saving…' : 'Save profile'}</button>}
+            <button type="button" className="nav-button" disabled={genreSaveBusy} onClick={() => {setGenreEditor(null);setGenreError('')}}>{genreReadOnly ? 'Close' : 'Cancel'}</button>
           </form>}
           <section className="content-grid" ref={analysisRef}>
             <article className="panel analysis-panel">
@@ -1546,7 +1557,7 @@ export default function App() {
                   return (
                     <button
                       key={name}
-                      className={`metric-card clickable ${activeMetric === name ? 'active' : ''} ${isMetricAvailable(value) ? scoreTone(value) : 'standard'} ${!isMetricAvailable(value) ? 'metric-na' : ''}`}
+                      className={`metric-card clickable ${value === 100 ? 'perfect-score' : ''} ${activeMetric === name ? 'active' : ''} ${isMetricAvailable(value) ? scoreTone(value) : 'standard'} ${!isMetricAvailable(value) ? 'metric-na' : ''}`}
                       onClick={() => setActiveMetric(name)}
                     >
                       <div className="metric-card-topline">
@@ -1705,7 +1716,6 @@ export default function App() {
                                 <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${curveSliderPosition(item.deviationPercent, item.key === 'movement')}%` }} /></span>
                                 <span className="tonal-readout profile-readout">
                                   <span>{readout}</span>
-                                  {infoOnly && <small className="info-only-note"><span className="info-icon">i</span> Information only</small>}
                                 </span>
                               </div>
                             )
