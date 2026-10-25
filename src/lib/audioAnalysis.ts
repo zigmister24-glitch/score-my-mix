@@ -1974,7 +1974,8 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     // Match the section score to visible cards, but skip Vocal when a section
     // is likely an intro, outro, instrumental, or breakdown with no vocal anchor.
     const visibleCardScores = [clarity, ...(i === 0 ? [] : [impact]), tonalBalance, width, masteringScore, ...(vocalLevel == null ? [] : [vocalLevel])]
-    const score = Math.round(visibleCardScores.reduce((sum, value) => sum + Math.round(value), 0) / visibleCardScores.length)
+    const scoreExact = visibleCardScores.reduce((sum, value) => sum + Math.round(value), 0) / visibleCardScores.length
+    const score = Math.round(scoreExact)
 
     const strengths = [
       {
@@ -2098,6 +2099,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
 
     sections.push({
       id: `section-${i + 1}`,
+      scoreExact,
       label: getTimeLabel(start, end),
       start,
       end,

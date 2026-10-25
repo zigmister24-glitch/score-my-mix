@@ -278,6 +278,7 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
             return (
               <button
                 key={section.id}
+                title={`${(section.scoreExact ?? section.score).toFixed(1)}%`}
                 className={`section-chip ${isActive ? 'active' : ''} level-${section.highlightLevel} ${chipTone(section.score)} ${editable ? 'editable-chip' : ''}`}
                 style={{ left, width, borderColor: isActive ? section.color : undefined }}
                 onClick={() => jumpToSection(section)}

@@ -92,6 +92,7 @@ export interface SectionAnalysis {
   start: number
   end: number
   score: number
+  scoreExact?: number
   status: string
   color: string
   highlightLevel: 0 | 1 | 2 | 3 | 4
