@@ -954,8 +954,9 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
 
   const tooWidePenalty = sideDeviation > 56 && Math.abs(middleDeviation) > 24 ? (sideDeviation - 56) * 0.14 : 0
 
-  const tastefulWideBonus = sideDeviation > 6 && Math.abs(middleDeviation) <= 26
-    ? Math.min(6, (sideDeviation - 6) * 0.12)
+  // Let healthy wide images reach full quality without extreme side energy.
+  const tastefulWideBonus = sideDeviation > 4 && Math.abs(middleDeviation) <= 26
+    ? Math.min(6, (sideDeviation - 4) * 0.20)
     : 0
 
   const intentionalFocusBonus = intentionalNarrowing
