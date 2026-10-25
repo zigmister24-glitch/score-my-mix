@@ -326,10 +326,10 @@ function scoreMasteringDb(value: number, target: number, goodWindow: number, out
   return Math.round(clamp(cap - ((delta - goodWindow) / Math.max(0.0001, outerWindow - goodWindow)) * 46, 35, cap))
 }
 
-export function scoreLoudness(integratedLufs: number, target = -14) {
+export function scoreLoudness(integratedLufs: number, target = -14.5) {
   if (integratedLufs >= target) return 100
   const gap = target - integratedLufs
-  return Math.round(clamp(100 - (gap * 2.2), 0, 99))
+  return Math.round(clamp(100 - (gap * 2.2), 0, 100))
 }
 
 function scoreTruePeak(truePeakDb: number) {
@@ -1159,10 +1159,10 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
     },
     mastering: {
       title: 'Mastering - How loud is this section?',
-      meaning: 'Section loudness scores 100% at -14 LUFS or louder and drops 2.2 percentage points per LUFS below that. Estimated true peak safety and PSR/punch remain separate readings.',
+      meaning: 'Section loudness scores 100% at -14.5 LUFS or louder and drops 2.2 percentage points per LUFS below that. Estimated true peak safety and PSR/punch remain separate readings.',
       influencedBy: 'Limiter drive, clipper ceiling, bus compression, low-end sustain, transient punch, saturation, and how hard the section is being pushed.',
       currentRead: mastering
-        ? `${mastering.integratedLufs.toFixed(1)} LUFS, ${mastering.truePeakDb.toFixed(2)} dBTP, PSR ${mastering.psr.toFixed(1)} dB. ${mastering.integratedLufs >= -14 ? 'This section meets the -14 LUFS loudness target.' : 'This section is below the -14 LUFS loudness target.'}`
+        ? `${mastering.integratedLufs.toFixed(1)} LUFS, ${mastering.truePeakDb.toFixed(2)} dBTP, PSR ${mastering.psr.toFixed(1)} dB. ${mastering.integratedLufs >= -14.5 ? 'This section meets the -14.5 LUFS loudness target.' : 'This section is below the -14.5 LUFS loudness target.'}`
         : 'Mastering readout unavailable for this section.',
     },
   }
@@ -1939,7 +1939,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const vocalLevel = hasVocalAnchor ? (vocalOverride === 'vocal' ? forcedVocalLevel : provisionalVocalLevel) : null
 
     const mastering = estimateMasteringMetrics(buffer, startIndex, endIndex, masteringGain)
-    const loudnessTarget = -14
+    const loudnessTarget = -14.5
     const loudness = scoreLoudness(mastering.integratedLufs, loudnessTarget)
     const truePeak = scoreTruePeak(mastering.truePeakDb)
     const punch = scorePsr(mastering.psr)

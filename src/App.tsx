@@ -49,10 +49,10 @@ The engine compares vocal energy against the surrounding mix and nearby vocal se
 To improve this:
 Balance vocal level consistency, automate phrases, reduce masking around vocals, and avoid sudden jumps or buried sections.`
     case 'mastering':
-      return `Mastering scores section loudness against a fixed -14 LUFS target.
+      return `Mastering scores section loudness against a fixed -14.5 LUFS target.
 
 How it works:
-Sections at -14 LUFS or louder score 100%; quieter sections lose 2.2 percentage points per LUFS. True peak and PSR/punch are shown separately.
+Sections at -14.5 LUFS or louder score 100%; quieter sections lose 2.2 percentage points per LUFS. True peak and PSR/punch are shown separately.
 
 To improve this:
 Adjust limiter drive, clipper/ceiling, bus compression, low-end sustain, and transient control section by section.`
