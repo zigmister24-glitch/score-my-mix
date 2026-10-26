@@ -34,6 +34,8 @@ function normaliseSections(sections, duration) {
     .map((section) => {
       const vocalOverride = String(section.vocalOverride || "auto");
       return {
+        impactIgnored: section.impactIgnored === true,
+        movementIgnored: section.movementIgnored === true,
         start: Number(section.start),
         end: Number(section.end),
         label: safeText(section.label || "", 60),
@@ -54,6 +56,8 @@ function normaliseSections(sections, duration) {
     end: Number(section.end.toFixed(3)),
     label: section.label,
     vocalOverride: section.vocalOverride || "auto",
+    impactIgnored: section.impactIgnored === true,
+    movementIgnored: section.movementIgnored === true,
   }));
 }
 
@@ -129,7 +133,7 @@ export async function onRequestPost(context) {
         SET title = ?, artist = ?, display_name = ?, duration_seconds = ?, sections_json = ?, updated_at = ?
         WHERE id = ?
       `).bind(title, artist, displayName, duration, sectionsJson, now, existing.id).run();
-      return json({ ok: true, status: "updated", id: existing.id });
+      return json({ ok: true, status: "updated", id: existing.id, sections });
     }
 
     const inserted = await context.env.DB.prepare(`
@@ -139,7 +143,7 @@ export async function onRequestPost(context) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(normalizedTitle, title, artist, displayName, duration, sectionsJson, now, now).run();
 
-    return json({ ok: true, status: "created", id: inserted.meta?.last_row_id ?? null });
+    return json({ ok: true, status: "created", id: inserted.meta?.last_row_id ?? null, sections });
   } catch (error) {
     console.error("[section-map] POST failed", error);
     return json({ ok: false, error: error.message }, 500);

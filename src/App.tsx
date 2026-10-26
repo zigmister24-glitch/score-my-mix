@@ -444,6 +444,11 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
   })
   const data = await res.json().catch(() => ({ ok: false, error: 'Invalid response' }))
   if (!res.ok || !data.ok) throw new Error(data.error || 'Section map save failed')
+  if (payload.sections.some(section => section.impactIgnored || section.movementIgnored)) {
+    const confirmed = Array.isArray(data.sections) && data.sections.length === payload.sections.length && payload.sections.every((section, index) =>
+      data.sections[index].impactIgnored === section.impactIgnored && data.sections[index].movementIgnored === section.movementIgnored)
+    if (!confirmed) throw new Error('Server did not confirm Ignore settings. Deploy the updated functions/api/section-map.js.')
+  }
   return data
 }
 
@@ -1064,7 +1069,7 @@ export default function App() {
       })
       .catch((error) => {
         console.error(error)
-        setSectionMapStatus('Auto-save failed - changes are still local')
+        setSectionMapStatus(error instanceof Error ? `${error.message} Changes are still local.` : 'Auto-save failed - changes are still local')
       })
   }
 
