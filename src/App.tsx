@@ -117,6 +117,7 @@ type SavedSectionMapItem = {
   start: number
   end: number
   label?: string
+  masteringIgnored?: boolean
   movementIgnored?: boolean
   impactIgnored?: boolean
   vocalOverride?: VocalOverrideMode
@@ -433,6 +434,7 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
         vocalOverride: section.vocalOverride ?? 'auto',
         impactIgnored: section.impactIgnored === true,
         movementIgnored: section.movementIgnored === true,
+        masteringIgnored: section.masteringIgnored === true,
       }
     }),
   }
@@ -444,9 +446,9 @@ async function saveSectionMap(track: TrackIdentityState, sections: SectionAnalys
   })
   const data = await res.json().catch(() => ({ ok: false, error: 'Invalid response' }))
   if (!res.ok || !data.ok) throw new Error(data.error || 'Section map save failed')
-  if (payload.sections.some(section => section.impactIgnored || section.movementIgnored)) {
+  if (payload.sections.some(section => section.impactIgnored || section.movementIgnored || section.masteringIgnored)) {
     const confirmed = Array.isArray(data.sections) && data.sections.length === payload.sections.length && payload.sections.every((section, index) =>
-      data.sections[index].impactIgnored === section.impactIgnored && data.sections[index].movementIgnored === section.movementIgnored)
+      data.sections[index].impactIgnored === section.impactIgnored && data.sections[index].movementIgnored === section.movementIgnored && data.sections[index].masteringIgnored === section.masteringIgnored)
     if (!confirmed) throw new Error('Server did not confirm Ignore settings. Deploy the updated functions/api/section-map.js.')
   }
   return data
@@ -544,6 +546,10 @@ function boundariesFromSectionMap(map: SavedSectionMap, durationSeconds: number)
 function boundariesFromSections(sections: SectionAnalysis[]) {
   if (!sections.length) return []
   return [sections[0].start, ...sections.map((section) => section.end)]
+}
+
+function masteringIgnoresFromSections(sections: Array<{masteringIgnored?: boolean}>): boolean[] {
+  return sections.map(section => section.masteringIgnored === true)
 }
 
 function movementIgnoresFromSections(sections: Array<{movementIgnored?: boolean}>): boolean[] {
@@ -742,7 +748,7 @@ export default function App() {
       await persistCustomGenre(profile, customGenresRef.current, IS_LOCAL_DEV)
       customGenresRef.current = next; setCustomGenres(next)
       if (audioBufferRef.current) {
-        const nextSections = buildSections(audioBufferRef.current, boundariesFromSections(sections), currentGenreProfile(), vocalOverridesFromSections(sections), impactIgnoresFromSections(sections), movementIgnoresFromSections(sections))
+        const nextSections = buildSections(audioBufferRef.current, boundariesFromSections(sections), currentGenreProfile(), vocalOverridesFromSections(sections), impactIgnoresFromSections(sections), movementIgnoresFromSections(sections), masteringIgnoresFromSections(sections))
         setSections(nextSections)
         autoSectionsRef.current = buildSections(audioBufferRef.current, undefined, currentGenreProfile())
       }
@@ -856,7 +862,7 @@ export default function App() {
 
       setSelectedGenre(loadedGenre)
       const nextSections = savedMap
-        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration), currentGenreProfile(loadedGenre), vocalOverridesFromSavedMap(savedMap), impactIgnoresFromSections(savedMap.sections), movementIgnoresFromSections(savedMap.sections))
+        ? buildSections(buffer, boundariesFromSectionMap(savedMap, buffer.duration), currentGenreProfile(loadedGenre), vocalOverridesFromSavedMap(savedMap), impactIgnoresFromSections(savedMap.sections), movementIgnoresFromSections(savedMap.sections), masteringIgnoresFromSections(savedMap.sections))
         : buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
       autoSectionsRef.current = buildSections(buffer, undefined, currentGenreProfile(loadedGenre))
       setSectionMapStatus(savedMap ? `Saved ${loadedGenre} map loaded` : `Genre - ${loadedGenre} loaded`)
@@ -1080,7 +1086,7 @@ export default function App() {
       const midpoint = (start + boundaries[i + 1]) / 2
       return sections.find(section => midpoint >= section.start && midpoint < section.end)?.impactIgnored === true
     })
-    const nextSections = buildSections(buffer, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections), mappedIgnores, boundaries.slice(0, -1).map((start, i) => sections.find(section => (start + boundaries[i + 1]) / 2 >= section.start && (start + boundaries[i + 1]) / 2 < section.end)?.movementIgnored === true))
+    const nextSections = buildSections(buffer, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections), mappedIgnores, boundaries.slice(0, -1).map((start, i) => sections.find(section => (start + boundaries[i + 1]) / 2 >= section.start && (start + boundaries[i + 1]) / 2 < section.end)?.movementIgnored === true), boundaries.slice(0, -1).map((start, i) => sections.find(section => (start + boundaries[i + 1]) / 2 >= section.start && (start + boundaries[i + 1]) / 2 < section.end)?.masteringIgnored === true))
     setSections(nextSections)
     setSectionMapDirty(dirty)
     setSectionMapStatus(dirty ? 'Manual section map edited - auto-saving...' : 'Saved section map loaded')
@@ -1166,11 +1172,22 @@ export default function App() {
   }
 
 
+  const setActiveMasteringIgnored = (ignored: boolean) => {
+    if (!audioBufferRef.current || !activeSection || activeSectionIndex < 0) return
+    const overrides = masteringIgnoresFromSections(sections)
+    overrides[activeSectionIndex] = ignored
+    const nextSections = buildSections(audioBufferRef.current, boundariesFromSections(sections), currentGenreProfile(), vocalOverridesFromSections(sections), impactIgnoresFromSections(sections), movementIgnoresFromSections(sections), overrides)
+    setSections(nextSections)
+    setActiveSectionId(nextSections[activeSectionIndex]?.id ?? activeSection.id)
+    setSectionMapDirty(true)
+    autoSaveSectionMap(nextSections)
+  }
+
   const setActiveMovementIgnored = (ignored: boolean) => {
     if (!audioBufferRef.current || !activeSection || activeSectionIndex < 0) return
     const overrides = movementIgnoresFromSections(sections)
     overrides[activeSectionIndex] = ignored
-    const nextSections = buildSections(audioBufferRef.current, boundariesFromSections(sections), currentGenreProfile(), vocalOverridesFromSections(sections), impactIgnoresFromSections(sections), overrides)
+    const nextSections = buildSections(audioBufferRef.current, boundariesFromSections(sections), currentGenreProfile(), vocalOverridesFromSections(sections), impactIgnoresFromSections(sections), overrides, masteringIgnoresFromSections(sections))
     setSections(nextSections)
     setActiveSectionId(nextSections[activeSectionIndex]?.id ?? activeSection.id)
     setSectionMapDirty(true)
@@ -1181,7 +1198,7 @@ export default function App() {
     if (!audioBufferRef.current || !activeSection || activeSectionIndex < 0) return
     const overrides = impactIgnoresFromSections(sections)
     overrides[activeSectionIndex] = ignored
-    const nextSections = buildSections(audioBufferRef.current, boundariesFromSections(sections), currentGenreProfile(), vocalOverridesFromSections(sections), overrides, movementIgnoresFromSections(sections))
+    const nextSections = buildSections(audioBufferRef.current, boundariesFromSections(sections), currentGenreProfile(), vocalOverridesFromSections(sections), overrides, movementIgnoresFromSections(sections), masteringIgnoresFromSections(sections))
     setSections(nextSections)
     setActiveSectionId(nextSections[activeSectionIndex]?.id ?? activeSection.id)
     setSectionMapDirty(true)
@@ -1193,7 +1210,7 @@ export default function App() {
     const boundaries = boundariesFromSections(sections)
     const overrides = vocalOverridesFromSections(sections)
     overrides[activeSectionIndex] = mode
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), overrides, impactIgnoresFromSections(sections), movementIgnoresFromSections(sections))
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), overrides, impactIgnoresFromSections(sections), movementIgnoresFromSections(sections), masteringIgnoresFromSections(sections))
     setSections(nextSections)
     setActiveSectionId(nextSections[activeSectionIndex]?.id ?? activeSection.id)
     setSectionMapDirty(true)
@@ -1221,7 +1238,7 @@ export default function App() {
     if (activeSectionIndex > 0) boundaries[activeSectionIndex] = safeStart
     if (activeSectionIndex < sections.length - 1) boundaries[activeSectionIndex + 1] = safeEnd
 
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections), impactIgnoresFromSections(sections), movementIgnoresFromSections(sections))
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(), vocalOverridesFromSections(sections), impactIgnoresFromSections(sections), movementIgnoresFromSections(sections), masteringIgnoresFromSections(sections))
     await saveCurrentSectionMap(nextSections)
   }
 
@@ -1254,7 +1271,7 @@ export default function App() {
         ? boundariesFromSections(sections)
         : undefined
 
-    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(nextGenre), savedMap ? vocalOverridesFromSavedMap(savedMap) : vocalOverridesFromSections(sections), savedMap ? impactIgnoresFromSections(savedMap.sections) : impactIgnoresFromSections(sections), savedMap ? movementIgnoresFromSections(savedMap.sections) : movementIgnoresFromSections(sections))
+    const nextSections = buildSections(audioBufferRef.current, boundaries, currentGenreProfile(nextGenre), savedMap ? vocalOverridesFromSavedMap(savedMap) : vocalOverridesFromSections(sections), savedMap ? impactIgnoresFromSections(savedMap.sections) : impactIgnoresFromSections(sections), savedMap ? movementIgnoresFromSections(savedMap.sections) : movementIgnoresFromSections(sections), savedMap ? masteringIgnoresFromSections(savedMap.sections) : masteringIgnoresFromSections(sections))
     const nextAutoSections = buildSections(audioBufferRef.current, undefined, currentGenreProfile(nextGenre))
     autoSectionsRef.current = nextAutoSections
 
@@ -1595,7 +1612,7 @@ export default function App() {
 
               <div className="metric-grid">
                 {METRIC_ORDER.filter((name) => name !== 'impact' || activeSectionIndex !== 0).map((name) => {
-                  const value = name === 'impact' && activeSection.impactIgnored ? null : activeSection.metrics[name]
+                  const value = ((name === 'impact' && activeSection.impactIgnored) || (name === 'mastering' && activeSection.masteringIgnored)) ? null : activeSection.metrics[name]
                   const label = metricLabel(name)
                   return (
                     <button
@@ -1628,6 +1645,13 @@ export default function App() {
                             onChange={event => {event.stopPropagation(); setActiveImpactIgnored(event.target.value === 'ignore')}}>
                             <option value="score">Score Impact</option>
                             <option value="ignore">Ignore Impact</option>
+                          </select>
+                        ) : name === 'mastering' ? (
+                          <select className="vocal-override-card-select" aria-label="Mastering scoring mode"
+                            value={activeSection.masteringIgnored ? 'ignore' : 'score'}
+                            onClick={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()}
+                            onChange={event => {event.stopPropagation(); setActiveMasteringIgnored(event.target.value === 'ignore')}}>
+                            <option value="score">Score Mastering</option><option value="ignore">Ignore Mastering</option>
                           </select>
                         ) : null}
                       </div>

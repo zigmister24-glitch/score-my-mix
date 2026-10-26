@@ -1211,7 +1211,7 @@ function normaliseCustomBoundaries(boundaries: number[], duration: number) {
   return result.length >= 2 ? result : [0, duration]
 }
 
-export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile, vocalOverrides: VocalOverrideMode[] = [], impactIgnores: boolean[] = [], movementIgnores: boolean[] = []): SectionAnalysis[] {
+export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile, vocalOverrides: VocalOverrideMode[] = [], impactIgnores: boolean[] = [], movementIgnores: boolean[] = [], masteringIgnores: boolean[] = []): SectionAnalysis[] {
   const channel = analysisChannels(buffer)
   const sampleRate = buffer.sampleRate
   const boundaries = customBoundaries?.length
@@ -1960,6 +1960,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
         : autoVocalAnchor
     const vocalLevel = hasVocalAnchor ? (vocalOverride === 'vocal' ? forcedVocalLevel : provisionalVocalLevel) : null
 
+    const masteringIgnored = masteringIgnores[i] === true
     const mastering = estimateMasteringMetrics(buffer, startIndex, endIndex, masteringGain)
     const loudnessTarget = -14.5
     const loudness = scoreLoudness(mastering.integratedLufs, loudnessTarget)
@@ -1994,7 +1995,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const metrics = { clarity, impact, tonalBalance, width, drumsVsEverything, vocalLevel, mastering: masteringScore }
     // Match the section score to visible cards, but skip Vocal when a section
     // is likely an intro, outro, instrumental, or breakdown with no vocal anchor.
-    const visibleCardScores = [clarity, ...(i === 0 || impactIgnored ? [] : [impact]), tonalBalance, width, masteringScore, ...(vocalLevel == null ? [] : [vocalLevel])]
+    const visibleCardScores = [clarity, ...(i === 0 || impactIgnored ? [] : [impact]), tonalBalance, width, ...(masteringIgnored ? [] : [masteringScore]), ...(vocalLevel == null ? [] : [vocalLevel])]
     const scoreExact = visibleCardScores.reduce((sum, value) => sum + Math.round(value), 0) / visibleCardScores.length
     const score = Math.round(scoreExact)
 
@@ -2134,6 +2135,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       vocalOverride,
       impactIgnored,
       movementIgnored,
+      masteringIgnored,
       metricInsights: buildMetricInsights(metrics, recommendations, mastering),
       tonalBalanceBands,
       clarityBands,

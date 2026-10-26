@@ -36,6 +36,7 @@ function normaliseSections(sections, duration) {
       return {
         impactIgnored: section.impactIgnored === true,
         movementIgnored: section.movementIgnored === true,
+        masteringIgnored: section.masteringIgnored === true,
         start: Number(section.start),
         end: Number(section.end),
         label: safeText(section.label || "", 60),
@@ -58,6 +59,7 @@ function normaliseSections(sections, duration) {
     vocalOverride: section.vocalOverride || "auto",
     impactIgnored: section.impactIgnored === true,
     movementIgnored: section.movementIgnored === true,
+    masteringIgnored: section.masteringIgnored === true,
   }));
 }
 
