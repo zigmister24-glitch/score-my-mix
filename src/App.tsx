@@ -1759,7 +1759,7 @@ export default function App() {
                         <div className="tonal-band-list">
                           {activeWidthBalance.map((item) => {
                             const position = Math.max(6, Math.min(94, 50 + item.deviationPercent * 2.2))
-                            const readout = item.key === 'movement' && activeSection.movementIgnored ? 'N/A · Ignored' : widthReadout(item)
+                            const readout = `${widthReadout(item)}${item.key === 'movement' && activeSection.movementIgnored ? ' · Ignored' : ''}`
                             const infoOnly = item.key !== 'movement'
                             return (
                               <div className={`tonal-band-row tonal-${item.severity} ${infoOnly ? 'profile-info-row' : 'profile-action-row'}`} key={item.key} title={item.action}>
