@@ -1541,7 +1541,7 @@ export default function App() {
           {genreError && <p role="alert">{genreError}</p>}
           {genreEditor && <form className="panel genre-editor" onSubmit={event => {event.preventDefault(); void saveGenreEditor()}}>
             <h3>{genreReadOnly ? 'Genre profile — read only' : 'Edit genre profile'}</h3>
-            <p>Band targets in dB relative to Modern Pop. Targets are normalised together; these settings do not apply EQ to your audio. Saved profiles are shared across browsers.</p>
+            <p>Band targets in dB relative to Modern Pop. Targets are normalised together; these settings do not apply EQ to your audio. Air also adjusts the Density Air reference. Saved profiles are shared across browsers.</p>
             {genreReadOnly && <p>This is a built-in reference profile. Use a User Defined genre to create your own targets.</p>}
             <label>Name <input readOnly={genreReadOnly} required maxLength={80} value={genreEditor.name} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,name:e.target.value})} /></label>
             <div className="genre-editor-bands">{BAND_KEYS.map(key => <label key={key}>{({weight:'Weight',body:'Body',core:'Core',air:'Air'})[key]} (dB)

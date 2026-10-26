@@ -72,7 +72,9 @@ function densityTargets(genreProfile?: AnalysisGenreProfile) {
     weight: shiftedTarget(0.28, genreProfile?.density?.weight ?? 0),
     body: shiftedTarget(0.27, genreProfile?.density?.body ?? 0),
     core: shiftedTarget(0.31, genreProfile?.density?.core ?? 0),
-    air: shiftedTarget(0.14, genreProfile?.density?.air ?? 0),
+    // Editable Air offsets express the intended brightness for both tonal and
+    // density references. Filtered audio energy and excess-density checks stay intact.
+    air: shiftedTarget(0.14, genreProfile?.density?.air ?? 0) * 10 ** ((genreProfile?.tonalDb?.air ?? 0) / 20),
   })
 }
 
