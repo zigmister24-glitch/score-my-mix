@@ -1339,13 +1339,16 @@ export default function App() {
 
   const selectedSectionScores = activeSection ? Object.values(activeSection.metrics).filter(isMetricAvailable) : []
 
-  const allMetricScores = sections.flatMap((section) => Object.values(section.metrics).filter(isMetricAvailable))
+  const allMetricScores = sections.flatMap((section, index) => METRIC_ORDER
+    .filter(name => !(name === 'impact' && (index === 0 || section.impactIgnored)))
+    .filter(name => !(name === 'mastering' && section.masteringIgnored))
+    .map(name => section.metrics[name]).filter(isMetricAvailable))
 
   const sectionSummary = allMetricScores.length
     ? [
-        { label: 'over 85%', count: allMetricScores.filter((score) => (score >= 85 && score <90)).length },
         { label: 'over 90%', count: allMetricScores.filter((score) => (score >= 90 && score <95)).length },
-        { label: 'over 95%', count: allMetricScores.filter((score) => score >= 95).length },
+        { label: 'over 95%', count: allMetricScores.filter((score) => score >= 95 && score < 100).length },
+        { label: 'at 100%', count: allMetricScores.filter((score) => score === 100).length },
       ]
     : []
 
