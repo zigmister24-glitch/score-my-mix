@@ -1327,6 +1327,7 @@ export default function App() {
   }
 
   const scoreLabel = (score: number) => {
+    if (score >= 100) return "HOLY F@CK!!! WE'VE RUN OUT OF NUMBERS! 🚀"
     if (score >= 95) return 'HOLY F@CK!!! Alien Tech Achieved'
     if (score >= 90) return "Certified Weapon"
     if (score >= 86) return "Pro Tier - Chart Ready"
