@@ -936,7 +936,7 @@ function buildWidthBands(stereoWidth: number, previousStereoWidth: number | null
   ]
 }
 
-function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
+function scoreWidthFromBands(widthBands: BalanceStripItem[], movementIgnored = false) {
   const middle = widthBands.find((band) => band.key === 'middle')
   const side = widthBands.find((band) => band.key === 'side')
   const movement = widthBands.find((band) => band.key === 'movement')
@@ -971,7 +971,7 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[]) {
   )
 
   // Without a previous section, judge stereo quality alone.
-  if (!movement) return clamp(Math.round(baseWidthQuality), 50, 100)
+  if (!movement || movementIgnored) return clamp(Math.round(baseWidthQuality), 50, 100)
 
   // Either direction earns equal credit, capped at a 20% width change.
   const movementScore = clamp(movementAmount / 20, 0, 1) * 100
@@ -1211,7 +1211,7 @@ function normaliseCustomBoundaries(boundaries: number[], duration: number) {
   return result.length >= 2 ? result : [0, duration]
 }
 
-export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile, vocalOverrides: VocalOverrideMode[] = [], impactIgnores: boolean[] = []): SectionAnalysis[] {
+export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], genreProfile?: AnalysisGenreProfile, vocalOverrides: VocalOverrideMode[] = [], impactIgnores: boolean[] = [], movementIgnores: boolean[] = []): SectionAnalysis[] {
   const channel = analysisChannels(buffer)
   const sampleRate = buffer.sampleRate
   const boundaries = customBoundaries?.length
@@ -1385,7 +1385,8 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const sectionLift = clamp((energy - previousEnergy) / Math.max(0.0001, previousEnergy), -0.5, 0.8)
     const tonalBalance = scoreTonalBalance(tonalBalanceBands)
     const widthBands = buildWidthBands(stereoWidth, previousStereoWidth, genreProfile)
-    const width = scoreWidthFromBands(widthBands)
+    const movementIgnored = movementIgnores[i] === true
+    const width = scoreWidthFromBands(widthBands, movementIgnored)
     const lowPunch = bandpassRms(channel, sampleRate, startIndex, endIndex, 75, 0.9)
     const lowMidMask = bandpassRms(channel, sampleRate, startIndex, endIndex, 260, 0.85)
     const midBody = bandpassRms(channel, sampleRate, startIndex, endIndex, 1050, 0.85)
@@ -2132,6 +2133,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       metrics,
       vocalOverride,
       impactIgnored,
+      movementIgnored,
       metricInsights: buildMetricInsights(metrics, recommendations, mastering),
       tonalBalanceBands,
       clarityBands,

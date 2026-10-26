@@ -105,6 +105,7 @@ export interface SectionAnalysis {
   levelBalance?: LevelBalanceStrip
   impactStrip?: ImpactStrip
   widthBands?: BalanceStripItem[]
+  movementIgnored?: boolean
   impactIgnored?: boolean
   vocalOverride?: VocalOverrideMode
   mastering?: MasteringMetrics
