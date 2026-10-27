@@ -1541,10 +1541,10 @@ export default function App() {
           {genreError && <p role="alert">{genreError}</p>}
           {genreEditor && <form className="panel genre-editor" onSubmit={event => {event.preventDefault(); void saveGenreEditor()}}>
             <h3>{genreReadOnly ? 'Genre profile — read only' : 'Edit genre profile'}</h3>
-            <p>Band targets in dB relative to Modern Pop. Targets are normalised together; these settings do not apply EQ to your audio. Air also adjusts the Density Air reference. Saved profiles are shared across browsers.</p>
+            <p>Band targets in dB relative to Modern Pop. Targets are normalised together; these settings do not apply EQ to your audio. Presence and Air also adjust their Density references. Saved profiles are shared across browsers.</p>
             {genreReadOnly && <p>This is a built-in reference profile. Use a User Defined genre to create your own targets.</p>}
             <label>Name <input readOnly={genreReadOnly} required maxLength={80} value={genreEditor.name} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,name:e.target.value})} /></label>
-            <div className="genre-editor-bands">{BAND_KEYS.map(key => <label key={key}>{({weight:'Weight',body:'Body',core:'Core',air:'Air'})[key]} (dB)
+            <div className="genre-editor-bands">{BAND_KEYS.map(key => <label key={key}>{({weight:'Weight',body:'Body',core:'Core',presence:'Presence',air:'Air'})[key]} (dB)
               <input type="number" readOnly={genreReadOnly} required min={-12} max={12} step="0.01" value={Number.isNaN(genreEditor.db[key]) ? '' : Math.round(genreEditor.db[key] * 100) / 100} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,db:{...genreEditor.db,[key]:e.target.valueAsNumber}})} />
               <small>{Number.isFinite(genreEditor.db[key]) ? `${genreEditor.db[key] > 0 ? '+' : genreEditor.db[key] < 0 ? '−' : ''}${Math.abs(genreEditor.db[key]).toFixed(2)} dB ${genreEditor.db[key] > 0 ? 'above Modern Pop' : genreEditor.db[key] < 0 ? 'below Modern Pop' : '— matches Modern Pop'}` : 'Enter a dB offset'}</small>
             </label>)}</div>

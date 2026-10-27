@@ -1,23 +1,26 @@
 import { BalanceStripItem, ImpactStrip, Recommendation, SectionAnalysis, SectionMetrics, TonalBalanceBand, MasteringMetrics, VocalOverrideMode } from './types'
 
 export type AnalysisGenreProfile = {
-  tonalDb?: { weight: number; body: number; core: number; air: number }
+  tonalDb?: { weight: number; body: number; core: number; presence?: number; air: number }
   tonal?: {
     weight?: number
     body?: number
     core?: number
+    presence?: number
     air?: number
   }
   density?: {
     weight?: number
     body?: number
     core?: number
+    presence?: number
     air?: number
   }
   densityWeights?: {
     weight?: number
     body?: number
     core?: number
+    presence?: number
     air?: number
   }
   vocals?: number
@@ -44,7 +47,7 @@ function normalizeTargets<T extends Record<string, number>>(targets: T): T {
 }
 
 function scoreTonalBalance(bands: TonalBalanceBand[]) {
-  const weights = { weight: 0.25, body: 0.30, core: 0.35, air: 0.10 }
+  const weights = { weight: 0.20, body: 0.25, core: 0.25, presence: 0.20, air: 0.10 }
   // Use the displayed excess beyond the accepted zone; high and low never cancel.
   const averageDeviation = bands.reduce((sum, band) => {
     const excess = Math.max(0, Math.abs(band.deviationPercent) - 10)
@@ -58,6 +61,7 @@ function getDensityWeights(genreProfile?: AnalysisGenreProfile) {
     weight: genreProfile?.densityWeights?.weight ?? 0.24,
     body: genreProfile?.densityWeights?.body ?? 0.34,
     core: genreProfile?.densityWeights?.core ?? 0.28,
+    presence: genreProfile?.densityWeights?.presence ?? 0.17647058823529413,
     air: genreProfile?.densityWeights?.air ?? 0.14,
   }
 
@@ -69,6 +73,7 @@ function densityTargets(genreProfile?: AnalysisGenreProfile) {
   // around a scooped low-mid profile: commercial references often carry Body
   // density well to the right while still sounding finished.
   return normalizeTargets({
+    presence: shiftedTarget(0.17647058823529413, genreProfile?.density?.presence ?? 0) * 10 ** ((genreProfile?.tonalDb?.presence ?? 0) / 20),
     weight: shiftedTarget(0.28, genreProfile?.density?.weight ?? 0),
     body: shiftedTarget(0.27, genreProfile?.density?.body ?? 0),
     core: shiftedTarget(0.31, genreProfile?.density?.core ?? 0),
@@ -728,8 +733,10 @@ function buildTonalBalanceBands(samples: AnalysisSamples, sampleRate: number, st
   const lowMid = bandpassRms(samples, sampleRate, startIndex, endIndex, 220, 0.85)
   const mid = bandpassRms(samples, sampleRate, startIndex, endIndex, 1050, 0.85)
   const high = bandpassRms(samples, sampleRate, startIndex, endIndex, 8500, 0.7)
-  const total = Math.max(0.0001, low + lowMid + mid + high)
+  const presence = bandpassRms(samples, sampleRate, startIndex, endIndex, 3200, 1)
+  const total = Math.max(0.0001, low + lowMid + mid + presence + high)
   const targets = normalizeTargets({
+    presence: genreProfile?.tonalDb ? 0.17647058823529413 * 10 ** ((genreProfile.tonalDb.presence ?? 0) / 20) : shiftedTarget(0.17647058823529413, genreProfile?.tonal?.presence),
     weight: genreProfile?.tonalDb ? 0.28 * 10 ** (genreProfile.tonalDb.weight / 20) : shiftedTarget(0.28, genreProfile?.tonal?.weight),
     body: genreProfile?.tonalDb ? 0.24 * 10 ** (genreProfile.tonalDb.body / 20) : shiftedTarget(0.24, genreProfile?.tonal?.body),
     core: genreProfile?.tonalDb ? 0.32 * 10 ** (genreProfile.tonalDb.core / 20) : shiftedTarget(0.32, genreProfile?.tonal?.core),
@@ -740,6 +747,7 @@ function buildTonalBalanceBands(samples: AnalysisSamples, sampleRate: number, st
     makeTonalBand('weight', 'Weight', 'Lows · 20–120 Hz', low / total, targets.weight, 'Add kick/bass weight or lift low-end elements about +1–2 dB.', 'Bass too dominant. Try reducing bass or kick about -1–2 dB.'),
     makeTonalBand('body', 'Body', 'Low-mids · 120–350 Hz', lowMid / total, targets.body, 'Add body with guitar, pad, or a gentle 180–300 Hz lift.', 'Low-mid buildup. Cut 150–300 Hz on guitars, pads, or reverb returns.'),
     makeTonalBand('core', 'Core', 'Mids · 350 Hz–2 kHz', mid / total, targets.core, 'Mids are thin. Increase guitar/synth about +1–2 dB or add acoustic/pad support.', 'Midrange crowded. Pull supporting guitars/synths back about -1 dB or cut 500 Hz–1 kHz.'),
+    makeTonalBand('presence', 'Presence', 'Upper-mids · 2–5 kHz', presence / total, targets.presence, 'Presence is lean. Check vocal, guitar and synth definition before adding 2–5 kHz.', 'Presence is forward. Check vocal, guitar and snare bite; ease competing 2–5 kHz energy if aggressive.'),
     makeTonalBand('air', 'Air', 'Highs · 5–12 kHz', high / total, targets.air, 'Add clarity with shaker, cymbal air, or a gentle 8–12 kHz lift.', 'Top end is bright. Reduce hats/cymbals or harsh 6–10 kHz by about -1 dB.'),
   ]
 }
@@ -1008,7 +1016,8 @@ function buildClarityBands(
   const core = (lowCore + midCore + upperCore) / 3
 
   const air = bandpassRms(samples, sampleRate, startIndex, endIndex, 8500, 0.7)
-  const total = Math.max(0.0001, weight + body + core + air)
+  const presence = bandpassRms(samples, sampleRate, startIndex, endIndex, 3200, 1)
+  const total = Math.max(0.0001, weight + body + core + presence + air)
   const coreSubTotal = Math.max(0.0001, weight + body + lowCore + midCore + upperCore + air)
   const weightShare = weight / total
   const bodyShare = body / total
@@ -1082,6 +1091,7 @@ function buildClarityBands(
     weight: weightShare,
     body: bodyShare,
     core: coreShare + (coreClash / 100) * 0.035,
+    presence: presence / total,
     air: airShare,
   }
 
@@ -1089,6 +1099,7 @@ function buildClarityBands(
     makeClarityBand('weight', 'Weight', '20–120 Hz', densityShare.weight, targets.weight, 'Weight is lean for this reference profile. Add bass/kick support before cutting low-mids.', 'Separate kick and bass first: try sidechain or cut one small pocket around 60–100 Hz.'),
     makeClarityBand('body', 'Body', '120–350 Hz', densityShare.body, targets.body, 'Body is lean against commercial references. Add warmth with guitars, pads, bass harmonics, or a gentle 180–300 Hz lift.', 'Low-mid accumulation is above this reference zone. Check guitars, pads, bass harmonics, and reverb returns before cutting the mix bus.'),
     makeClarityBand('core', 'Core', '350 Hz–2 kHz', densityShare.core, targets.core, 'Core feels underfilled. Add musical midrange support before pushing air or sub.', 'Core density. If vocals/guitars are masked, pull busy synths back about -1 dB or cut a small pocket around 500 Hz–1 kHz.'),
+    makeClarityBand('presence', 'Presence', '2–5 kHz', densityShare.presence, targets.presence, 'Presence is lean for this profile. Check lead definition before boosting.', 'Presence accumulation. Check overlapping vocals, guitars, synths and snare around 2–5 kHz before cutting the mix bus.'),
     makeClarityBand('air', 'Air', '5–12 kHz', densityShare.air, targets.air, 'Air is dark for this profile. Add cymbal/vocal sheen or a gentle 8–12 kHz lift.', 'Bright density. If it feels fizzy or masks cymbal/vocal air, ease 6–10 kHz by about -1 dB.'),
   ]
 }

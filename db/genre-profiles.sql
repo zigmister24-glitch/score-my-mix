@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS genre_profiles (
   weight_db REAL NOT NULL CHECK (weight_db BETWEEN -12 AND 12),
   body_db REAL NOT NULL CHECK (body_db BETWEEN -12 AND 12),
   core_db REAL NOT NULL CHECK (core_db BETWEEN -12 AND 12),
+  presence_db REAL NOT NULL DEFAULT 0 CHECK (presence_db BETWEEN -12 AND 12),
   air_db REAL NOT NULL CHECK (air_db BETWEEN -12 AND 12),
   updated_at TEXT NOT NULL
 );

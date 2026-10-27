@@ -1,10 +1,10 @@
-export const BAND_KEYS = ['weight', 'body', 'core', 'air'] as const
+export const BAND_KEYS = ['weight', 'body', 'core', 'presence', 'air'] as const
 export type BandKey = typeof BAND_KEYS[number]
 export type CustomGenre = { id: string; name: string; db: Record<BandKey, number> }
 export const CUSTOM_IDS = ['Scarlett Lullaby', 'User Defined 1', 'User Defined 2', 'User Defined 3', 'User Defined 4']
 export function defaultCustomGenres(): CustomGenre[] {
   return CUSTOM_IDS.map(id => ({ id, name: id, db: Object.fromEntries(BAND_KEYS.map(key => [key,
-    id === 'Scarlett Lullaby' ? 20 * Math.log10(1 + ({weight:14, body:4, core:2, air:1}[key]) / 100) : 0,
+    id === 'Scarlett Lullaby' ? 20 * Math.log10(1 + ({weight:14, body:4, core:2, presence:0, air:1}[key]) / 100) : 0,
   ])) as Record<BandKey, number> }))
 }
 async function profileResponse(response: Response) {
@@ -21,7 +21,8 @@ export async function loadCustomGenres(local: boolean): Promise<CustomGenre[]> {
   const data = local ? JSON.parse(localStorage.getItem('mix-custom-genres') || '[]') : (await profileResponse(await fetch('/api/genre-profiles'))).profiles
   if (!Array.isArray(data)) throw new Error('Genre profiles API returned an invalid profile list.')
   return defaults.map(base => {
-    const saved = data.find(item => item.id === base.id)
+    const existing = data.find(item => item.id === base.id)
+    const saved = existing ? {...existing, db:{...existing.db, presence:existing.db?.presence ?? 0}} : null
     return saved && typeof saved.name === 'string' && BAND_KEYS.every(key => Number.isFinite(saved.db?.[key]) && Math.abs(saved.db[key]) <= 12) ? saved : base
   })
 }

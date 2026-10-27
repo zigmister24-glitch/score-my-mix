@@ -55,3 +55,20 @@ Validation:
 node tests/custom-genres.mjs
 npm run build
 ```
+
+### Presence band upgrade
+
+Tonal Balance and Density now include Presence (2–5 kHz), sampled at 3.2 kHz.
+The editor includes a Presence dB offset; it adjusts both tonal and density
+references. Existing saved profiles without this value start at 0 dB.
+These remain overlapping filter estimates, not brick-wall spectral bands.
+
+For an existing database, run `db/genre-profiles-presence.sql` once before
+publishing. New databases can use the updated `db/genre-profiles.sql` instead;
+do not run the ALTER migration after creating the new five-band schema.
+Deploy `functions/api/genre-profiles.js` together with the frontend.
+
+Tonal score weights: Weight 20%, Body 25%, Core 25%, Presence 20%, Air 10%.
+Density retains its existing worst-band/stack scoring and includes Presence
+among the evaluated bands. Five-band references are renormalised, so scores
+can differ from earlier four-band results and should be reviewed by ear.
