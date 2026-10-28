@@ -962,7 +962,7 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[], movementIgnored = f
   const movementDeviation = movement?.deviationPercent ?? 0
   const movementAmount = Math.abs(movementDeviation)
 
-  // Stereo quality is independent of movement so its influence stays at 5%.
+  // Stereo quality stands on its own; movement can only add a small bonus.
   const centrePenalty = Math.max(0, Math.abs(middleDeviation) - 18) * 0.20
   const centreStable = Math.abs(middleDeviation) <= 20
   const intentionalNarrowing = sideDeviation < -14 && centreStable
@@ -991,8 +991,8 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[], movementIgnored = f
   if (!movement || movementIgnored) return clamp(Math.round(baseWidthQuality), 50, 100)
 
   // Either direction earns equal credit, capped at a 20% width change.
-  const movementScore = clamp(movementAmount / 20, 0, 1) * 100
-  return clamp(Math.round(baseWidthQuality * 0.95 + movementScore * 0.05), 0, 100)
+  const movementBonus = clamp(movementAmount / 20, 0, 1) * 5
+  return clamp(Math.round(baseWidthQuality + movementBonus), 0, 100)
 }
 
 function buildClarityBands(
@@ -1188,7 +1188,7 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
     },
     width: {
       title: 'Width - How wide and immersive does the stereo image feel?',
-      meaning: 'Width scores 95% stereo quality and 5% change from the previous section. Widening and narrowing earn equal movement credit, reaching full credit at a 20% change. The first section uses stereo quality alone.',
+      meaning: 'Width starts with stereo quality and adds up to 5 bonus points for change from the previous section, capped at 100%. Widening and narrowing earn equal bonuses, reaching the full bonus at a 20% change. Zero or ignored movement adds no bonus and causes no penalty. The first section uses stereo quality alone.',
       influencedBy: 'Centre-vs-side contrast, panning automation, doubled parts, pads, delay/reverb spread, mono compatibility, and width movement from the previous section.',
       currentRead:
         metrics.width >= 88
