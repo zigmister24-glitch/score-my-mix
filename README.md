@@ -86,3 +86,20 @@ this adjustment read-only at zero. Existing profiles default to zero.
 Before deploying to an existing D1 database, run `db/genre-profiles-vocals.sql`
 once. Deploy `functions/api/genre-profiles.js` with the frontend. New databases
 can use the latest `db/genre-profiles.sql` directly instead of ALTER migrations.
+
+
+### Band audition
+
+Hold the headphone button beside a Tonal Balance reading to audition that
+labelled frequency range in the selected section. Release, leave the button,
+or switch focus/section to restore normal playback. Keyboard users can hold
+Space or Enter on the button. If playback was paused, audition starts at the
+section beginning and stops on release. Existing playback continues when the
+button is released. Audition stops at the selected section end.
+
+Browser Web Audio high-pass/low-pass filters use the labelled band boundaries
+with gradual slopes, a 20 ms dry/wet crossfade and no automatic gain boost.
+This is a listening aid, not a soloed instrument or the exact analyser filter.
+No files, scoring targets or database records are changed.
+
+Run `node tests/band-audition.mjs` to check the audio routing and filter setup.

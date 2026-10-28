@@ -1,3 +1,4 @@
+import { AuditionBand } from './lib/bandAudition'
 import { BAND_KEYS, CUSTOM_IDS, CustomGenre, defaultCustomGenres, loadCustomGenres, persistCustomGenre } from './lib/customGenres'
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import WaveformPanel, { WaveformHandle } from './components/WaveformPanel'
@@ -984,6 +985,27 @@ export default function App() {
     if (activeSectionIndex === 0 && activeMetric === 'impact') setActiveMetric('clarity')
   }, [activeSectionIndex, activeMetric])
 
+  const [auditionBand, setAuditionBand] = useState<AuditionBand | null>(null)
+  const stopTonalAudition = () => {waveformApiRef.current?.stopBandAudition(); setAuditionBand(null)}
+  useEffect(() => {
+    stopTonalAudition()
+    return () => {waveformApiRef.current?.stopBandAudition()}
+  }, [activeMetric, activeSectionId, fileUrl])
+  useEffect(() => {
+    const stop = () => stopTonalAudition()
+    window.addEventListener('blur', stop)
+    const hide = () => {if(document.hidden) stop()}
+    document.addEventListener('visibilitychange', hide)
+    return () => {window.removeEventListener('blur', stop);document.removeEventListener('visibilitychange', hide)}
+  }, [])
+  const startTonalAudition = (band: AuditionBand) => {
+    if (!activeSection) return
+    setAuditionBand(band)
+    void waveformApiRef.current?.startBandAudition(band, activeSection).catch(error => {
+      stopTonalAudition(); setError(error instanceof Error ? `Band audition failed: ${error.message}` : 'Band audition failed.')
+    })
+  }
+
   const activeMetricInsight = activeSection && !(activeMetric === 'impact' && (activeSectionIndex === 0 || activeSection.impactIgnored)) ? activeSection.metricInsights[activeMetric] : null
 
   const recommendationTargetsByMetric: Record<keyof SectionAnalysis['metrics'], string[]> = {
@@ -1693,15 +1715,27 @@ export default function App() {
                             const db = band.deviationDb ?? 0
                             const readout = `${db > 0 ? '+' : ''}${db.toFixed(1)} dB${band.status === 'good' ? ' · Good' : db < 0 ? ' · Below target' : ' · Above target'}`
                             return (
-                              <button
-                                className={`tonal-band-row tonal-${band.severity}`}
+                              <div
+                                className={`tonal-band-row tonal-audition-row tonal-${band.severity}`}
                                 key={band.key}
                                 title={band.action}
                               >
                                 <span className="tonal-band-name">{band.label}<small>{band.range}</small></span>
                                 <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${curveSliderPosition(band.deviationPercent)}%` }} /></span>
-                                <span className="tonal-readout">{readout}</span>
-                              </button>
+                                <span className="tonal-readout band-audition-readout">{readout}
+                                  <button type="button" className={`band-audition-button ${auditionBand === band.key ? 'auditioning' : ''}`}
+                                    aria-label={`Hold to hear ${band.label}, ${band.range}`} aria-pressed={auditionBand === band.key}
+                                    title={`Hold to hear ${band.label} only; release to restore playback`}
+                                    onPointerDown={event => {if(event.button !== 0) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); startTonalAudition(band.key)}}
+                                    onPointerUp={stopTonalAudition} onPointerCancel={stopTonalAudition} onLostPointerCapture={stopTonalAudition}
+                                    onPointerLeave={stopTonalAudition} onBlur={stopTonalAudition}
+                                    onContextMenu={event => event.preventDefault()}
+                                    onKeyDown={event => {if((event.key === ' ' || event.key === 'Enter') && !event.repeat){event.preventDefault();startTonalAudition(band.key)}}}
+                                    onKeyUp={event => {if(event.key === ' ' || event.key === 'Enter'){event.preventDefault();stopTonalAudition()}}}>
+                                    <span aria-hidden="true">🎧</span>
+                                  </button>
+                                </span>
+                              </div>
                             )
                           })}
                         </div>

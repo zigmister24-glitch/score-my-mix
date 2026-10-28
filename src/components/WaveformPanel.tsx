@@ -1,3 +1,4 @@
+import { BandAudition, AuditionBand } from '../lib/bandAudition'
 import { forwardRef, PointerEvent as ReactPointerEvent, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import WaveSurfer from 'wavesurfer.js'
 import { SectionAnalysis } from '../lib/types'
@@ -26,6 +27,8 @@ interface WaveformPanelProps {
 }
 
 export interface WaveformHandle {
+  startBandAudition: (band: AuditionBand, section: SectionAnalysis) => Promise<void>
+  stopBandAudition: () => void
   seekToSection: (section: SectionAnalysis) => void
   playSection: (section: SectionAnalysis) => void
   toggleTrack: () => Promise<void>
@@ -76,6 +79,43 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
   const [duration, setDuration] = useState(0)
   const frameRef = useRef<HTMLDivElement | null>(null)
 
+  const auditionGraphRef = useRef<BandAudition | null>(null)
+  const auditionRef = useRef<{wasPlaying:boolean; end:number} | null>(null)
+  const auditionTokenRef = useRef(0)
+  const stopBandAudition = () => {
+    auditionTokenRef.current += 1
+    const state = auditionRef.current
+    auditionRef.current = null
+    auditionGraphRef.current?.setBand(null)
+    if (state && !state.wasPlaying) waveSurferRef.current?.pause()
+  }
+  const startBandAudition = async (band: AuditionBand, section: SectionAnalysis) => {
+    stopBandAudition()
+    const ws = waveSurferRef.current
+    if (!ws || !ws.getDuration()) return
+    const state = {wasPlaying:ws.isPlaying(), end:section.end}
+    auditionRef.current = state
+    const token = ++auditionTokenRef.current
+    try {
+      if (!auditionGraphRef.current) auditionGraphRef.current = new BandAudition(ws.getMediaElement())
+      const graph = auditionGraphRef.current
+      graph.setBand(band)
+      await graph.context.resume()
+      if (token !== auditionTokenRef.current) return
+      if (ws.getCurrentTime() < section.start || ws.getCurrentTime() >= section.end || !state.wasPlaying) ws.setTime(section.start)
+      await ws.play()
+      if (token !== auditionTokenRef.current && !state.wasPlaying) ws.pause()
+    } catch (error) { stopBandAudition(); throw error }
+  }
+  useEffect(() => {
+    const stop = () => stopBandAudition()
+    const visibility = () => {if (document.hidden) stop()}
+    window.addEventListener('blur', stop)
+    document.addEventListener('visibilitychange', visibility)
+    return () => {window.removeEventListener('blur', stop); document.removeEventListener('visibilitychange', visibility)}
+  }, [])
+  useEffect(() => {stopBandAudition()}, [activeSectionId])
+
   useEffect(() => {
     if (!waveformRef.current || !fileUrl) return
 
@@ -99,6 +139,9 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
     })
 
     ws.on('timeupdate', (time) => {
+      if (auditionRef.current && time >= auditionRef.current.end) {
+        ws.pause(); stopBandAudition()
+      }
       setCurrentTime(time)
       onTimeChange?.(time)
       if (sectionPlaybackRef.current) {
@@ -125,6 +168,9 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
     })
 
     return () => {
+      stopBandAudition()
+      auditionGraphRef.current?.dispose()
+      auditionGraphRef.current = null
       ws.destroy()
       waveSurferRef.current = null
       setIsPlaying(false)
@@ -135,6 +181,8 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
   }, [fileUrl, onPlayStateChange, onTimeChange, sections])
 
   const togglePlayback = async () => {
+    stopBandAudition()
+    await auditionGraphRef.current?.context.resume()
     if (!waveSurferRef.current) return
     sectionPlaybackRef.current = null
     await waveSurferRef.current.playPause()
@@ -164,13 +212,18 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
   }, [duration])
 
   useImperativeHandle(ref, () => ({
+    startBandAudition,
+    stopBandAudition,
     seekToSection(section: SectionAnalysis) {
+      stopBandAudition()
       if (!waveSurferRef.current || duration === 0) return
       sectionPlaybackRef.current = null
       onSelectSection(section.id)
       movePlayheadToSection(section)
     },
     playSection(section: SectionAnalysis) {
+      stopBandAudition()
+      void auditionGraphRef.current?.context.resume()
       if (!waveSurferRef.current || duration === 0) return
       onSelectSection(section.id)
       sectionPlaybackRef.current = section.id
@@ -179,6 +232,7 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
     },
     toggleTrack: togglePlayback,
     pause() {
+      stopBandAudition()
       waveSurferRef.current?.pause()
       sectionPlaybackRef.current = null
     },
