@@ -40,6 +40,7 @@ export interface MetricInsight {
 }
 
 export interface BalanceStripItem {
+  referenceDeviationPercent?: number
   key: string
   label: string
   range: string

@@ -918,7 +918,7 @@ function buildWidthBands(stereoWidth: number, previousStereoWidth: number | null
           ? 'Side energy is wide. That can be excellent when the vocal, kick, bass, and snare still feel anchored in the middle.'
           : 'Overall spread is spacious. Keep the stereo magic, but strengthen the centre if the section feels hollow.'
 
-    return { key, label, range, deviationPercent, status, severity, action }
+    return { key, label, range, deviationPercent, referenceDeviationPercent: sideDeviation, status, severity, action }
   }
 
   const motionPercent = Math.round(expansionPercent)

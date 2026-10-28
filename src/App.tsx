@@ -312,6 +312,14 @@ function impactReadout(item: ImpactStrip) {
 }
 
 function widthReadout(item: BalanceStripItem) {
+  const label = widthDescription(item)
+  if (item.key === 'movement') return label
+  const value = item.referenceDeviationPercent ?? item.deviationPercent
+  const rounded = Math.round(value * 10) / 10
+  return `${rounded > 0 ? '+' : ''}${rounded.toFixed(1)}% · ${label}`
+}
+
+function widthDescription(item: BalanceStripItem) {
   const value = item.deviationPercent
   if (item.key === 'middle') {
     if (value < -20) return 'Centre-light'
