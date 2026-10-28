@@ -1542,6 +1542,7 @@ export default function App() {
 
 
           <WaveformPanel
+            audioBuffer={audioBufferRef.current}
             ref={waveformApiRef}
             fileUrl={fileUrl}
             fileName={fileName}

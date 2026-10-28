@@ -1,3 +1,4 @@
+import LiveWidthMeter from './LiveWidthMeter'
 import { BandAudition, AuditionBand } from '../lib/bandAudition'
 import { forwardRef, PointerEvent as ReactPointerEvent, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import WaveSurfer from 'wavesurfer.js'
@@ -5,6 +6,7 @@ import { SectionAnalysis } from '../lib/types'
 import { formatTime } from '../lib/audioAnalysis'
 
 interface WaveformPanelProps {
+  audioBuffer?: AudioBuffer | null
   fileUrl: string | null
   fileName: string
   sections: SectionAnalysis[]
@@ -51,6 +53,7 @@ const chipTone = (score: number) => {
 }
 
 const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function WaveformPanel({
+  audioBuffer = null,
   fileUrl,
   fileName,
   sections,
@@ -324,6 +327,7 @@ const WaveformPanel = forwardRef<WaveformHandle, WaveformPanelProps>(function Wa
 
       <div className="waveform-frame" ref={frameRef}>
         <div ref={waveformRef} />
+        <LiveWidthMeter buffer={audioBuffer} time={currentTime} playing={isPlaying} getTime={() => waveSurferRef.current?.getCurrentTime() ?? currentTime} />
         <div className="section-overlay">
           {sections.map((section, index) => {
             const left = `${(section.start / Math.max(1, duration)) * 100}%`

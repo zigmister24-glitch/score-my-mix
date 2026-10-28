@@ -1226,3 +1226,9 @@ button, input { font: inherit; }
   .tonal-band-row.tonal-audition-row { grid-template-columns: 78px minmax(0, 1fr); }
   .tonal-audition-row .band-audition-readout { grid-column: 1 / -1; }
 }
+
+.live-width-meter { position: relative; width: 100%; height: 18px; margin: 10px 0 0; pointer-events: none; }
+.live-width-rail { position: absolute; left: 0; right: 0; top: 7px; height: 4px; border-radius: 8px; background: #26334c; }
+.live-width-fill { position: absolute; top: 5px; height: 8px; border-radius: 8px; background: linear-gradient(90deg, #ca7bf0, #8363d2, #ca7bf0); opacity: .8; }
+.live-width-centre { position: absolute; top: 3px; bottom: 3px; left: 50%; width: 1px; background: #b9bad0; }
+.live-width-dot { position: absolute; top: 3px; width: 12px; height: 12px; transform: translateX(-50%); border-radius: 50%; background: #f3b4e5; border: 1px solid #ffe0f4; }
