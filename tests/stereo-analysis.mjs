@@ -72,11 +72,14 @@ const allLoaded=m.buildSections(buffer([left,right]),[0,4,8,12],undefined,[],all
 assert.equal(allLoaded[1].scoreExact,masteringOff[1].scoreExact)
 console.log('Passed ignored Mastering averaging, preserved meter readings, independent flags and save/reload checks.')
 
-// Movement is an additive bonus, not a requirement for a healthy base score.
+// Width is 95% Breathing plus up to 5 Movement points.
 for (const [change, expected] of [[0,95],[4,96],[10,98],[20,100],[-20,100],[25,100]]) {
-  const bands=[{key:'breathing',deviationPercent:0,breathingScore:95},{key:'movement',deviationPercent:change}]
+  const bands=[{key:'breathing',deviationPercent:0,breathingScore:100},{key:'movement',deviationPercent:change}]
   assert.equal(m.scoreWidthFromBands(bands),expected)
   assert.equal(m.scoreWidthFromBands(bands,true),100)
 }
 assert.equal(m.scoreWidthFromBands([{key:'breathing',deviationPercent:0,breathingScore:95}]),95)
-console.log('Passed additive Movement bonus anchors, both directions, 100% cap, ignored/zero movement and first-section baseline checks.')
+console.log('Passed weighted Breathing/Movement anchors, both directions, 100% cap, ignored/zero movement and first-section baseline checks.')
+
+assert.equal(m.scoreWidthFromBands([{key:'breathing',deviationPercent:0,breathingScore:100},{key:'movement',deviationPercent:-7}]),97)
+assert.equal(m.scoreWidthFromBands([{key:'breathing',deviationPercent:0,breathingScore:90},{key:'movement',deviationPercent:0}],true),91)

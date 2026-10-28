@@ -954,7 +954,7 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[], movementIgnored = f
   const movement = widthBands.find(band => band.key === 'movement')
   if (!movement) return clamp(Math.round(base),0,100)
   const bonus = movementIgnored ? 5 : clamp(Math.abs(movement.deviationPercent)/20,0,1)*5
-  return clamp(Math.round(base+bonus),0,100)
+  return clamp(Math.round(base * .95 + bonus),0,100)
 }
 
 function buildClarityBands(
@@ -1150,7 +1150,7 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
     },
     width: {
       title: 'Width - How wide and immersive does the stereo image feel?',
-      meaning: 'Width starts with within-section stereo breathing (90–100%) and adds up to 5 bonus points for change from the previous section, capped at 100%. Widening and narrowing earn equal bonuses, reaching the full bonus at a 20% change. Zero scored movement adds no bonus. Ignore Movement awards the full 5-point allowance for intentional steady width. The first section uses Breathing alone. Absolute spread is not rewarded or penalised.',
+      meaning: 'Width combines 95% of the Breathing score with up to 5 points for Movement. Widening and narrowing earn equal credit, reaching the full 5 points at a 20% change. Ignore Movement awards those 5 points. The first section uses Breathing alone. Absolute spread is not rewarded or penalised.',
       influencedBy: 'Centre-vs-side contrast, panning automation, doubled parts, pads, delay/reverb spread, mono compatibility, and width movement from the previous section.',
       currentRead:
         metrics.width >= 88
