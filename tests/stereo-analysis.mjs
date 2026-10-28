@@ -51,7 +51,7 @@ console.log('Passed ignored Impact averaging, default behaviour, unaffected meas
 const movementOff=m.buildSections(buffer([left,right]),[0,4,8,12],undefined,[],[false,true,false],[false,true,false])
 assert.equal(movementOff[1].movementIgnored,true)
 assert.equal(movementOff[1].impactIgnored,true)
-assert.equal(movementOff[1].metrics.width,m.scoreWidthFromBands(movementOff[1].widthBands.filter(b=>b.key!=='movement')))
+assert.equal(movementOff[1].metrics.width,m.scoreWidthFromBands(movementOff[1].widthBands.map(b=>b.key==='movement'?{...b,deviationPercent:20}:b)))
 assert.equal(movementOff[0].score,scored[0].score)
 assert.equal(movementOff[2].score,scored[2].score)
 const movementSaved=normaliseSections([{start:0,end:4},{start:4,end:8,impactIgnored:true,movementIgnored:true},{start:8,end:12,movementIgnored:'true'}],12)
@@ -76,7 +76,7 @@ console.log('Passed ignored Mastering averaging, preserved meter readings, indep
 for (const [change, expected] of [[0,95],[4,96],[10,98],[20,100],[-20,100],[25,100]]) {
   const bands=[{key:'middle',deviationPercent:0},{key:'side',deviationPercent:0},{key:'movement',deviationPercent:change}]
   assert.equal(m.scoreWidthFromBands(bands),expected)
-  assert.equal(m.scoreWidthFromBands(bands,true),95)
+  assert.equal(m.scoreWidthFromBands(bands,true),100)
 }
 assert.equal(m.scoreWidthFromBands([{key:'middle',deviationPercent:0},{key:'side',deviationPercent:0}]),95)
 console.log('Passed additive Movement bonus anchors, both directions, 100% cap, ignored/zero movement and first-section baseline checks.')

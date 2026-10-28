@@ -985,7 +985,9 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[], movementIgnored = f
   )
 
   // Without a previous section, judge stereo quality alone.
-  if (!movement || movementIgnored) return clamp(Math.round(baseWidthQuality), 50, 100)
+  if (!movement) return clamp(Math.round(baseWidthQuality), 50, 100)
+  // Intentional steady width receives the full movement allowance.
+  if (movementIgnored) return clamp(Math.round(baseWidthQuality + 5), 0, 100)
 
   // Either direction earns equal credit, capped at a 20% width change.
   const movementBonus = clamp(movementAmount / 20, 0, 1) * 5
@@ -1185,7 +1187,7 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
     },
     width: {
       title: 'Width - How wide and immersive does the stereo image feel?',
-      meaning: 'Width starts with stereo quality and adds up to 5 bonus points for change from the previous section, capped at 100%. Widening and narrowing earn equal bonuses, reaching the full bonus at a 20% change. Zero or ignored movement adds no bonus and causes no penalty. The first section uses stereo quality alone.',
+      meaning: 'Width starts with stereo quality and adds up to 5 bonus points for change from the previous section, capped at 100%. Widening and narrowing earn equal bonuses, reaching the full bonus at a 20% change. Zero scored movement adds no bonus. Ignore Movement awards the full 5-point allowance for intentional steady width. The first section uses stereo quality alone.',
       influencedBy: 'Centre-vs-side contrast, panning automation, doubled parts, pads, delay/reverb spread, mono compatibility, and width movement from the previous section.',
       currentRead:
         metrics.width >= 88
