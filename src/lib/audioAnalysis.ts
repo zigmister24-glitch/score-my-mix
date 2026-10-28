@@ -57,18 +57,6 @@ function scoreTonalBalance(bands: TonalBalanceBand[]) {
   return clamp(Math.round(100 - averageDeviation * 1.25), 0, 100)
 }
 
-function getDensityWeights(genreProfile?: AnalysisGenreProfile) {
-  const raw = {
-    weight: genreProfile?.densityWeights?.weight ?? 0.24,
-    body: genreProfile?.densityWeights?.body ?? 0.34,
-    core: genreProfile?.densityWeights?.core ?? 0.28,
-    presence: genreProfile?.densityWeights?.presence ?? 0.17647058823529413,
-    air: genreProfile?.densityWeights?.air ?? 0.14,
-  }
-
-  return normalizeTargets(raw)
-}
-
 function densityTargets(genreProfile?: AnalysisGenreProfile) {
   // Reference-calibrated occupancy targets. These are intentionally not centred
   // around a scooped low-mid profile: commercial references often carry Body
@@ -852,11 +840,20 @@ function clarityGoodLimit(key: string) {
   return 10
 }
 
-function clarityScorePressure(band: BalanceStripItem) {
-  // v0.81: the slider position stays based on total density, while the
-  // readout/scoring uses only the amount above the healthy tolerance.
-  const excess = Math.max(0, Math.abs(band.displayPercent ?? band.deviationPercent))
-  return excess <= 0 ? 0 : 8 + excess * 1.15
+function scoreDensity(bands: BalanceStripItem[]) {
+  const weights: Record<string, number> = { weight: 0.20, body: 0.30, core: 0.20, presence: 0.20, air: 0.10 }
+  const deviations = bands.map(band => ({
+    key: band.key,
+    excess: Math.max(0, Math.abs(band.displayPercent ?? 0)),
+  }))
+  const average = deviations.reduce((sum, band) => sum + band.excess * (weights[band.key] ?? 0), 0)
+  // Match Tonal Balance's smooth slope; high and low deviations never cancel.
+  const weightedDeduction = average * 1.25
+  // Only substantial single-band imbalances trigger this safeguard. Use the
+  // stronger deduction, not an additional stacked penalty on the same issue.
+  const worstExcess = Math.max(0, ...deviations.map(band => band.excess))
+  const severeDeduction = Math.max(0, worstExcess - 12) * 1.25
+  return clamp(Math.round(100 - Math.max(weightedDeduction, severeDeduction)), 0, 100)
 }
 
 function makeClarityBand(key: string, label: string, range: string, share: number, target: number, actionLow: string, actionHigh: string): BalanceStripItem {
@@ -1137,7 +1134,7 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
   return {
     clarity: {
       title: 'Density - How crowded or accumulated does each region feel?',
-      meaning: 'How much energy is accumulating in each frequency region, and whether that density feels controlled or congested.',
+      meaning: 'Density uses deviations outside each band’s accepted zone: Weight 20%, Body 30%, Core 20%, Presence 20%, Air 10%. Small deviations reduce the score smoothly; substantial single-band imbalances retain a safeguard.',
       influencedBy: 'Layering, saturation, low-mid warmth, reverb tails, bass harmonics, vocal presence, and how much elements overlap.',
       currentRead:
         metrics.clarity >= 74
@@ -1445,53 +1442,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
       ) / 3
       : 0
     const clarityBands = buildClarityBands(channel, sampleRate, startIndex, endIndex, transientEnergy, fullRms, { impact, width, tonalBalance, coreStereoSeparation }, genreProfile)
-    const clarityPressureValues = clarityBands.map((band) => clarityScorePressure(band))
-    const clarityWorst = Math.max(...clarityPressureValues)
-    const clarityWatchCount = clarityBands.filter((band) => band.severity !== 'good').length
-    const clarityFixCount = clarityBands.filter((band) => band.severity === 'fix').length
-    const clarityProblemBands = clarityBands.filter((band) => band.severity !== 'good')
-    const onlyCoreWarning = clarityProblemBands.length === 1 && clarityProblemBands[0]?.key === 'core'
-    const lowBandsClean = clarityBands
-      .filter((band) => band.key === 'weight' || band.key === 'body')
-      .every((band) => band.severity === 'good')
-    const airClean = clarityBands.find((band) => band.key === 'air')?.severity === 'good'
-    const intentionalCoreDensity = Boolean(
-      onlyCoreWarning
-      && lowBandsClean
-      && airClean
-      && impact >= 88
-      && tonalBalance >= 80,
-    )
-
-    // v0.69: keep the visible Core clash readout, but stop one isolated,
-    // intentional midrange-density warning from cratering the whole Clarity card.
-    // Multi-band clashes and low-band mud are still punished hard.
-    const effectiveClarityWorst = intentionalCoreDensity
-      ? Math.max(10, clarityWorst * 0.52)
-      : clarityWorst
-    const effectiveWatchCount = intentionalCoreDensity ? 1 : clarityWatchCount
-    const effectiveFixCount = intentionalCoreDensity ? 0 : clarityFixCount
-    // v0.76: keep the clash readouts expressive, but make the Clarity
-    // percentage more perceptual and less punitive. Commercial/reference mixes
-    // can show several density warnings while still sounding clear because the
-    // ear can decode groove, width, tone, and transient intent. Use a softer
-    // score curve here: severe multi-band problems still pull the score down,
-    // but normal musical density no longer craters the card.
-    const clarityBaseScore = effectiveClarityWorst <= 8
-      ? 100
-      : effectiveClarityWorst <= 16
-        ? 95
-        : effectiveClarityWorst <= 24
-          ? 91
-          : effectiveClarityWorst <= 32
-            ? 88
-            : 88 - ((effectiveClarityWorst - 32) * 0.6)
-    const densityStackPenalty = Math.max(0, effectiveWatchCount - 1) * 0.75 + effectiveFixCount * 1.25
-    const clarity = clamp(
-      Math.round(clarityBaseScore - densityStackPenalty),
-      62,
-      100,
-    )
+    const clarity = scoreDensity(clarityBands)
 
     // Full-mix drum proxy: compare drum-like attack/low-end against vocal and midrange content.
     // This avoids the old self-normalised value that could stay frozen after drum bus changes.

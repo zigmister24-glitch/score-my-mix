@@ -69,8 +69,10 @@ do not run the ALTER migration after creating the new five-band schema.
 Deploy `functions/api/genre-profiles.js` together with the frontend.
 
 Tonal score weights: Weight 20%, Body 25%, Core 25%, Presence 20%, Air 10%.
-Density retains its existing worst-band/stack scoring and includes Presence
-among the evaluated bands. Five-band references are renormalised, so scores
+Density uses a weighted average of excess outside band tolerances: Weight 20%,
+Body 30%, Core 20%, Presence 20%, Air 10%. The deduction is 1.25 times this
+average. A severe-band safeguard starts above 12 points outside tolerance:
+1.25 times the excess beyond 12. The larger deduction applies, without stacking. Five-band references are renormalised, so scores
 can differ from earlier four-band results and should be reviewed by ear.
 
 ### Vocal preference adjustment
