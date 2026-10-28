@@ -34,12 +34,14 @@ export default function LiveWidthMeter({buffer, time, playing, getTime}: {
   const label = `${percent.toFixed(1)}%`
   return <div className="live-width-meter" role="meter" aria-label="Energy-weighted stereo width"
     aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)} aria-valuetext={`${label} stereo width; display reaches its edges at 50%`}>
+    <span className="live-width-value live-width-value-left" aria-hidden="true">{label}</span>
+    <span className="live-width-value live-width-value-right" aria-hidden="true">{label}</span>
     <div className="live-width-track">
     <span className="live-width-rail" />
     <span className="live-width-fill" style={{left:`${left}%`,width:`${right-left}%`}} />
     <span className="live-width-centre" />
-    <span className="live-width-value live-width-value-left" aria-hidden="true" style={{left:`${left}%`}}>{label}</span>
-    <span className="live-width-value live-width-value-right" aria-hidden="true" style={{left:`${right}%`}}>{label}</span>
+    <span className="live-width-dot" style={{left:`${left}%`}} />
+    <span className="live-width-dot" style={{left:`${right}%`}} />
     </div>
   </div>
 }
