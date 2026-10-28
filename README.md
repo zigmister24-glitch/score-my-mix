@@ -103,3 +103,22 @@ This is a listening aid, not a soloed instrument or the exact analyser filter.
 No files, scoring targets or database records are changed.
 
 Run `node tests/band-audition.mjs` to check the audio routing and filter setup.
+
+### Width: Breathing and Movement
+
+The Width card now contains only Breathing and Movement. Absolute spread,
+centre inference and duplicated Space readings no longer affect Width scoring.
+The live width meter remains available for visualising spread.
+
+Breathing uses 400 ms RMS mid/side windows every 200 ms. Windows below -100 dB
+power or 40 dB below the section's loudest window are excluded. The 10th–90th
+percentile width range is divided by median width (with an 8% denominator floor).
+Provisional full-credit thresholds are 10% relative variation and 1 percentage
+point absolute variation. The smaller completion fraction determines a 90–100
+base score. More variation earns no additional credit. Fewer than five active
+windows receive no deduction and are marked as insufficient audio.
+
+Movement remains the same signed previous-section comparison, with an absolute
+20% change earning the maximum +5 bonus, capped at 100%. Ignore Movement awards
+that full allowance. The first section uses Breathing alone. This measures
+stereo variation, not overall dynamics, phase safety or musical intent.

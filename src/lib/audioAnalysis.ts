@@ -886,45 +886,46 @@ function makeWidthBand(key: string, label: string, range: string, deviationPerce
   return { key, label, range, deviationPercent, status, severity, action }
 }
 
-function buildWidthBands(stereoWidth: number, previousStereoWidth: number | null, genreProfile?: AnalysisGenreProfile): BalanceStripItem[] {
-  // stereoWidth is side / (mid + side). Wide sides are not automatically bad.
-  // Width combines: centre anchor, side energy, total space, and stereo movement.
-  // The centre readout is deliberately softer than the side readout: a modern,
-  // cinematic section can have very wide sides without automatically having a
-  // broken centre.
-  const widthOffset = ((genreProfile?.width?.side ?? 0) + (genreProfile?.width?.amount ?? 0)) / 2
-  const targetSideShare = shiftedTarget(0.23, widthOffset)
-  const sideDeviation = ((stereoWidth - targetSideShare) / targetSideShare) * 100
-  const wideExcess = Math.max(0, sideDeviation - 8)
-  const narrowExcess = Math.max(0, -sideDeviation - 8)
-  const middleDeviation = clamp((narrowExcess * 0.45) - (wideExcess * 0.28), -24, 18)
+// Within-section RMS width variation, independent of absolute loudness.
+function measureBreathing(buffer: AudioBuffer, start: number, end: number): BalanceStripItem {
+  const window = Math.max(1, Math.floor(buffer.sampleRate * .4))
+  const hop = Math.max(1, Math.floor(buffer.sampleRate * .2))
+  const windows: Array<{power:number; width:number}> = []
+  if (buffer.numberOfChannels >= 2) {
+    const left=buffer.getChannelData(0), right=buffer.getChannelData(1)
+    for(let from=start; from + window <= end; from += hop) {
+      let mid=0, side=0
+      for(let i=from;i<from+window;i++) {
+        const m=(left[i]+right[i])*.5, s=(left[i]-right[i])*.5
+        mid+=m*m; side+=s*s
+      }
+      windows.push({power:(mid+side)/window,width:Math.sqrt(side)/Math.max(1e-12,Math.sqrt(mid)+Math.sqrt(side))})
+    }
+  }
+  const peak=Math.max(0,...windows.map(w=>w.power))
+  const active=windows.filter(w=>w.power>Math.max(1e-10,peak*.0001)).map(w=>w.width).sort((a,b)=>a-b)
+  const enough = active.length >= 5
+  const percentile=(p:number) => {
+    if(!active.length) return 0
+    const position=(active.length-1)*p, lower=Math.floor(position), fraction=position-lower
+    return active[lower]*(1-fraction)+active[Math.min(lower+1,active.length-1)]*fraction
+  }
+  const delta=enough ? percentile(.9)-percentile(.1) : 0
+  const relative=delta/Math.max(.08,percentile(.5))
+  // Provisional tuning: 10% relative breathing plus at least 1 percentage
+  // point of real width variation earns full credit. More earns no extra.
+  const quality=enough ? Math.min(1,relative/.10,delta/.01) : 1
+  const score=90+10*quality
+  return {key:'breathing',label:'Breathing',range:'Within this section',deviationPercent:relative*100,
+    displayPercent:delta*100,breathingScore:score,breathingAvailable:enough,
+    status:quality>=1?'good':'low',severity:quality>=1?'good':'watch',
+    action:enough ? `Typical width range (10th–90th percentile): ${(delta*100).toFixed(1)} percentage points; ${(relative*100).toFixed(1)}% of typical width. Full credit at 10% relative variation and at least 1 point absolute variation. This is provisional stereo-breathing calibration.` : 'Not enough active stereo audio to judge breathing; no deduction applied.'}
+}
+
+function buildWidthBands(stereoWidth: number, previousStereoWidth: number | null, _genreProfile?: AnalysisGenreProfile, breathing?: BalanceStripItem): BalanceStripItem[] {
   const expansionPercent = previousStereoWidth == null
     ? 0
     : ((stereoWidth - previousStereoWidth) / Math.max(0.04, previousStereoWidth)) * 100
-  const middle = makeWidthBand('middle', 'Middle', 'Centre anchor', middleDeviation, 'The centre may be getting hollow. Keep vocal, kick, bass, and snare firmly centred.', 'The mix is leaning centre-heavy. Move guitars, pads, delays, or textures further out before widening the master bus.')
-
-  const makeWideFriendlyBand = (key: string, label: string, range: string): BalanceStripItem => {
-    const deviationPercent = Math.round(clamp(sideDeviation, -32, 32))
-    const abs = Math.abs(deviationPercent)
-    const status: BalanceStripItem['status'] = abs <= 10 ? 'good' : deviationPercent < 0 ? 'low' : 'high'
-    const severity: BalanceStripItem['severity'] = status === 'low'
-      ? abs <= 20 ? 'watch' : 'fix'
-      : status === 'high'
-        ? abs <= 36 ? 'good' : abs <= 52 ? 'watch' : 'fix'
-        : 'good'
-    const action = status === 'good'
-      ? `${label} is sitting well. Protect it while fixing bigger scorecards.`
-      : status === 'low'
-        ? key === 'side'
-          ? 'Side energy is controlled. If this section should open up, add width with double-tracked guitars, stereo pads, delays, or FX returns.'
-          : 'Overall width is focused. That can suit verses, but choruses may want wider support layers or ambience.'
-        : key === 'side'
-          ? 'Side energy is wide. That can be excellent when the vocal, kick, bass, and snare still feel anchored in the middle.'
-          : 'Overall spread is spacious. Keep the stereo magic, but strengthen the centre if the section feels hollow.'
-
-    return { key, label, range, deviationPercent, referenceDeviationPercent: sideDeviation, status, severity, action }
-  }
-
   const motionPercent = Math.round(expansionPercent)
   const motionStatus: BalanceStripItem['status'] = motionPercent < 0 ? 'low' : motionPercent > 0 ? 'high' : 'good'
   const motionSeverity: BalanceStripItem['severity'] = 'good'
@@ -943,55 +944,17 @@ function buildWidthBands(stereoWidth: number, previousStereoWidth: number | null
   }
 
   return [
-    middle,
-    makeWideFriendlyBand('side', 'Side', 'Stereo edges'),
-    makeWideFriendlyBand('amount', 'Space', 'Overall spread'),
+    ...(breathing ? [breathing] : []),
     ...(previousStereoWidth == null ? [] : [movement]),
   ]
 }
 
 function scoreWidthFromBands(widthBands: BalanceStripItem[], movementIgnored = false) {
-  const middle = widthBands.find((band) => band.key === 'middle')
-  const side = widthBands.find((band) => band.key === 'side')
-  const movement = widthBands.find((band) => band.key === 'movement')
-  const middleDeviation = middle?.deviationPercent ?? 0
-  const sideDeviation = side?.deviationPercent ?? 0
-  const movementDeviation = movement?.deviationPercent ?? 0
-  const movementAmount = Math.abs(movementDeviation)
-
-  // Stereo quality stands on its own; movement can only add a small bonus.
-  const centrePenalty = Math.max(0, Math.abs(middleDeviation) - 18) * 0.20
-  const centreStable = Math.abs(middleDeviation) <= 20
-  const intentionalNarrowing = sideDeviation < -14 && centreStable
-  const rawNarrowPenalty = sideDeviation < -14 ? (Math.abs(sideDeviation) - 14) * 0.42 : 0
-  const narrowPenalty = intentionalNarrowing ? rawNarrowPenalty * 0.35 : rawNarrowPenalty
-
-  const tooWidePenalty = sideDeviation > 56 && Math.abs(middleDeviation) > 24 ? (sideDeviation - 56) * 0.14 : 0
-
-  // Let healthy wide images reach full quality without extreme side energy.
-  const tastefulWideBonus = sideDeviation > 4 && Math.abs(middleDeviation) <= 26
-    ? Math.min(6, (sideDeviation - 4) * 0.20)
-    : 0
-
-  const intentionalFocusBonus = intentionalNarrowing
-    ? Math.min(4, Math.abs(sideDeviation + 14) * 0.12 + (centreStable ? 1.5 : 0))
-    : 0
-
-  const baseWidthQuality = clamp(
-    // Healthy stereo balance starts at 95; little movement should still clear 90.
-    95 - centrePenalty - narrowPenalty - tooWidePenalty + tastefulWideBonus + intentionalFocusBonus,
-    62,
-    100,
-  )
-
-  // Without a previous section, judge stereo quality alone.
-  if (!movement) return clamp(Math.round(baseWidthQuality), 50, 100)
-  // Intentional steady width receives the full movement allowance.
-  if (movementIgnored) return clamp(Math.round(baseWidthQuality + 5), 0, 100)
-
-  // Either direction earns equal credit, capped at a 20% width change.
-  const movementBonus = clamp(movementAmount / 20, 0, 1) * 5
-  return clamp(Math.round(baseWidthQuality + movementBonus), 0, 100)
+  const base = widthBands.find(band => band.key === 'breathing')?.breathingScore ?? 100
+  const movement = widthBands.find(band => band.key === 'movement')
+  if (!movement) return clamp(Math.round(base),0,100)
+  const bonus = movementIgnored ? 5 : clamp(Math.abs(movement.deviationPercent)/20,0,1)*5
+  return clamp(Math.round(base+bonus),0,100)
 }
 
 function buildClarityBands(
@@ -1187,7 +1150,7 @@ function buildMetricInsights(metrics: SectionMetrics, recommendations: Recommend
     },
     width: {
       title: 'Width - How wide and immersive does the stereo image feel?',
-      meaning: 'Width starts with stereo quality and adds up to 5 bonus points for change from the previous section, capped at 100%. Widening and narrowing earn equal bonuses, reaching the full bonus at a 20% change. Zero scored movement adds no bonus. Ignore Movement awards the full 5-point allowance for intentional steady width. The first section uses stereo quality alone.',
+      meaning: 'Width starts with within-section stereo breathing (90–100%) and adds up to 5 bonus points for change from the previous section, capped at 100%. Widening and narrowing earn equal bonuses, reaching the full bonus at a 20% change. Zero scored movement adds no bonus. Ignore Movement awards the full 5-point allowance for intentional steady width. The first section uses Breathing alone. Absolute spread is not rewarded or penalised.',
       influencedBy: 'Centre-vs-side contrast, panning automation, doubled parts, pads, delay/reverb spread, mono compatibility, and width movement from the previous section.',
       currentRead:
         metrics.width >= 88
@@ -1403,7 +1366,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const previousEnergy = i > 0 ? averageAbs(channel, previousStart, previousEnd) : globalEnergy
     const sectionLift = clamp((energy - previousEnergy) / Math.max(0.0001, previousEnergy), -0.5, 0.8)
     const tonalBalance = scoreTonalBalance(tonalBalanceBands)
-    const widthBands = buildWidthBands(stereoWidth, previousStereoWidth, genreProfile)
+    const widthBands = buildWidthBands(stereoWidth, previousStereoWidth, genreProfile, measureBreathing(buffer, startIndex, endIndex))
     const movementIgnored = movementIgnores[i] === true
     const width = scoreWidthFromBands(widthBands, movementIgnored)
     const lowPunch = bandpassRms(channel, sampleRate, startIndex, endIndex, 75, 0.9)

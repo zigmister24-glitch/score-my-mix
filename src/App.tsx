@@ -313,38 +313,10 @@ function impactReadout(item: ImpactStrip) {
 }
 
 function widthReadout(item: BalanceStripItem) {
-  const label = widthDescription(item)
-  if (item.key === 'movement') return label
-  const value = item.referenceDeviationPercent ?? item.deviationPercent
-  const rounded = Math.round(value * 10) / 10
-  return `${rounded > 0 ? '+' : ''}${rounded.toFixed(1)}% · ${label}`
-}
-
-function widthDescription(item: BalanceStripItem) {
-  const value = item.deviationPercent
-  if (item.key === 'middle') {
-    if (value < -20) return 'Centre-light'
-    if (value < -10) return 'Slightly centre-light'
-    if (value > 20) return 'Dense centre'
-    if (value > 10) return 'Strong centre'
-    return 'Balanced'
-  }
-  if (item.key === 'side') {
-    if (value < -20) return 'Narrow sides'
-    if (value < -10) return 'Controlled width'
-    if (value > 26) return 'Very wide'
-    if (value > 10) return 'Wide'
-    return 'Balanced'
-  }
-  if (item.key === 'movement') {
-    if (value === 0) return '0% · Steady'
-    return `${value > 0 ? '+' : ''}${value}% · ${value > 0 ? 'Widening' : 'Narrowing'}`
-  }
-  if (value < -20) return 'Focused'
-  if (value < -10) return 'Tight'
-  if (value > 26) return 'Cinematic'
-  if (value > 10) return 'Spacious'
-  return 'Open'
+  if (item.key === 'breathing' && item.breathingAvailable === false) return 'Not enough audio'
+  if (item.key === 'breathing') return `${(item.displayPercent ?? 0).toFixed(1)} pp · ${(item.breathingScore ?? 100) >= 100 ? 'Breathing' : 'Steady'}`
+  const value=item.deviationPercent
+  return `${value > 0 ? '+' : ''}${value}% · ${value === 0 ? 'Steady' : value > 0 ? 'Widening' : 'Narrowing'}`
 }
 
 function sameSong(a: Pick<LeaderboardEntry, 'normalizedTitle' | 'durationSeconds'>, b: Pick<LeaderboardEntry, 'normalizedTitle' | 'durationSeconds'>) {
@@ -1039,19 +1011,7 @@ export default function App() {
     return { key, label, range, deviationPercent: rounded, status, severity, action }
   }
 
-  const activeWidthBalance = useMemo(() => {
-    if (!activeSection) return []
-    if (activeSection.widthBands?.length) return activeSection.widthBands
-
-    const widthTarget = 88
-    const sideDeviation = Math.max(-28, Math.min(28, (activeSection.metrics.width - widthTarget) * 0.8))
-    const middleDeviation = -sideDeviation
-    return [
-      makeLocalStripItem('middle', 'Middle', 'Centre image', middleDeviation, middleDeviation > 10 ? 'The mix is leaning centre-heavy. Move guitars, pads, delays, or textures further out before widening the master bus.' : middleDeviation < -10 ? 'The centre may be getting hollow. Keep vocal, kick, bass, and snare firmly centred.' : 'Middle energy feels balanced. Protect the vocal, kick, bass, and snare in the centre.'),
-      makeLocalStripItem('side', 'Side', 'Stereo edges', sideDeviation, sideDeviation < -10 ? 'Side energy is low. Add width with double-tracked guitars, stereo pads, or wider FX returns.' : sideDeviation > 10 ? 'Side energy is wide. That can be excellent when the vocal, kick, bass, and snare still feel anchored in the middle.' : 'Side energy is sitting well. Keep the width moves subtle.'),
-      makeLocalStripItem('amount', 'Space', 'Overall spread', sideDeviation, sideDeviation < -10 ? 'Overall width is a little narrow. Move supporting guitars, pads, delays, or FX wider first.' : sideDeviation > 10 ? 'Overall spread is wide. Keep the stereo magic, but strengthen the centre if the section feels hollow.' : 'Overall width amount is sitting well. Protect the centre and keep the edges alive.'),
-    ]
-  }, [activeSection])
+  const activeWidthBalance = useMemo(() => activeSection?.widthBands ?? [], [activeSection])
 
   const activeTonalBands = useMemo(() => activeSection?.tonalBalanceBands ?? [], [activeSection])
   const activeMasteringBands = useMemo(() => activeSection?.masteringBands ?? [], [activeSection])
@@ -1800,7 +1760,7 @@ export default function App() {
                         return (
                           <div className={`tonal-band-row tonal-${item.severity}`} key={item.key}>
                             <span className="tonal-band-name">{item.label}<small>{item.range}</small></span>
-                            <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${curveSliderPosition(item.deviationPercent, item.key === 'movement')}%` }} /></span>
+                            <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${item.key === 'breathing' ? Math.min(100, Math.max(0, item.deviationPercent / 10 * 100)) : curveSliderPosition(item.deviationPercent, true)}%` }} /></span>
                             <span className="tonal-readout">{readout}</span>
                           </div>
                         )
@@ -1847,7 +1807,7 @@ export default function App() {
                                     <option value="score">Score Movement</option><option value="ignore">Ignore Movement</option>
                                   </select>}
                                 </span>
-                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${curveSliderPosition(item.deviationPercent, item.key === 'movement')}%` }} /></span>
+                                <span className="tonal-strip"><span className="tonal-center" /><span className="tonal-dot" style={{ left: `${item.key === 'breathing' ? Math.min(100, Math.max(0, item.deviationPercent / 10 * 100)) : curveSliderPosition(item.deviationPercent, true)}%` }} /></span>
                                 <span className="tonal-readout profile-readout">
                                   <span>{readout}</span>
                                 </span>

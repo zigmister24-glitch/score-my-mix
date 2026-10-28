@@ -40,6 +40,8 @@ export interface MetricInsight {
 }
 
 export interface BalanceStripItem {
+  breathingScore?: number
+  breathingAvailable?: boolean
   referenceDeviationPercent?: number
   key: string
   label: string

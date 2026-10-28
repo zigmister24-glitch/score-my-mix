@@ -74,9 +74,9 @@ console.log('Passed ignored Mastering averaging, preserved meter readings, indep
 
 // Movement is an additive bonus, not a requirement for a healthy base score.
 for (const [change, expected] of [[0,95],[4,96],[10,98],[20,100],[-20,100],[25,100]]) {
-  const bands=[{key:'middle',deviationPercent:0},{key:'side',deviationPercent:0},{key:'movement',deviationPercent:change}]
+  const bands=[{key:'breathing',deviationPercent:0,breathingScore:95},{key:'movement',deviationPercent:change}]
   assert.equal(m.scoreWidthFromBands(bands),expected)
   assert.equal(m.scoreWidthFromBands(bands,true),100)
 }
-assert.equal(m.scoreWidthFromBands([{key:'middle',deviationPercent:0},{key:'side',deviationPercent:0}]),95)
+assert.equal(m.scoreWidthFromBands([{key:'breathing',deviationPercent:0,breathingScore:95}]),95)
 console.log('Passed additive Movement bonus anchors, both directions, 100% cap, ignored/zero movement and first-section baseline checks.')
