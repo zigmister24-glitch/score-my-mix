@@ -2,7 +2,7 @@ import ts from 'typescript'
 import fs from 'node:fs'
 import assert from 'node:assert/strict'
 const js=ts.transpileModule(fs.readFileSync('src/lib/liveWidth.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText
-const {energyWeightedWidth:width}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)
+const {energyWeightedWidth:width,liveWidthDisplay}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)
 const rate=48000, length=rate
 const tone=Float32Array.from({length},(_,i)=>Math.sin(i*2*Math.PI*440/rate))
 const side=Float32Array.from({length},(_,i)=>Math.sin(i*2*Math.PI*1700/rate))
@@ -21,3 +21,10 @@ const quieter=buffer([normal.getChannelData(0).map(v=>v*.1),normal.getChannelDat
 assert.ok(Math.abs(width(normal,.5)-width(quieter,.5))<1e-7)
 assert.ok(Number.isFinite(width(normal,1)))
 console.log('Passed quiet-layer weighting, mono/centre, wide/anti-phase, silence, channel swap and level independence checks.')
+
+assert.deepEqual(liveWidthDisplay(0),{left:50,right:50,percent:0})
+assert.deepEqual(liveWidthDisplay(.25),{left:25,right:75,percent:25})
+assert.deepEqual(liveWidthDisplay(.5),{left:0,right:100,percent:50})
+assert.deepEqual(liveWidthDisplay(.7),{left:0,right:100,percent:70})
+assert.deepEqual(liveWidthDisplay(NaN),{left:50,right:50,percent:0})
+console.log('Passed 2x display zoom, retained actual readings, 50% edge limit and over-range numeric readings.')

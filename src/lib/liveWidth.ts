@@ -14,3 +14,10 @@ export function energyWeightedWidth(buffer: AudioBuffer | null, time: number): n
   const mid = Math.sqrt(midPower), side = Math.sqrt(sidePower)
   return side / (mid + side)
 }
+
+// Display zoom only: retain the measured percentage while 50% fills the rail.
+export function liveWidthDisplay(width: number) {
+  const measured = Number.isFinite(width) ? Math.min(1, Math.max(0, width)) : 0
+  const spread = Math.min(1, measured / .5)
+  return {left:50 - spread * 50, right:50 + spread * 50, percent:measured * 100}
+}
