@@ -25,7 +25,7 @@ const renamed={...defaults[1],name:'My Rock',db:{weight:2,body:-1,core:0,presenc
 await profiles.persistCustomGenre(renamed,defaults,true)
 assert.deepEqual((await profiles.loadCustomGenres(true))[1],renamed)
 let row=null
-const DB={prepare:()=>({bind:(...args)=>({run:async()=>{row={id:args[0],name:args[1],weight_db:args[2],body_db:args[3],core_db:args[4],presence_db:args[5],air_db:args[6]}}}),all:async()=>({results:row?[row]:[]})})}
+const DB={prepare:()=>({bind:(...args)=>({run:async()=>{row={id:args[0],name:args[1],weight_db:args[2],body_db:args[3],core_db:args[4],presence_db:args[5],air_db:args[6],vocal_db:args[7]}}}),all:async()=>({results:row?[row]:[]})})}
 const api=await import('../functions/api/genre-profiles.js')
 const post=body=>api.onRequestPost({request:new Request('https://example.test/api/genre-profiles',{method:'POST',body:JSON.stringify(body)}),env:{DB}})
 assert.equal((await post(renamed)).status,200)
@@ -72,3 +72,19 @@ const oldStored={...renamed,db:{...renamed.db}};delete oldStored.db.presence
 stored=JSON.stringify([oldStored])
 assert.equal((await profiles.loadCustomGenres(true))[1].db.presence,0)
 console.log('Passed Presence frequency response, editable tonal/density target, five-band order and legacy profile upgrade checks.')
+
+const vocalSource=fs.readFileSync('src/lib/audioAnalysis.ts','utf8')+'\nexport {vocalTargets};'
+const vocalJs=ts.transpileModule(vocalSource,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText
+const {vocalTargets}=await import(`data:text/javascript;base64,${Buffer.from(vocalJs).toString('base64')}`)
+assert.deepEqual(vocalTargets({vocals:2}),vocalTargets({vocals:2,vocalDb:0}))
+assert.ok(vocalTargets({vocals:2,vocalDb:1}).judgementTarget>vocalTargets({vocals:2}).judgementTarget)
+assert.ok(vocalTargets({vocals:2,vocalDb:-1}).judgementTarget<vocalTargets({vocals:2}).judgementTarget)
+assert.ok(Math.abs(vocalTargets({vocalDb:2}).target/vocalTargets({}).target-10**(2/20))<1e-10)
+const louder={...renamed,vocalDb:1.5}
+await profiles.persistCustomGenre(louder,defaults,true)
+assert.equal((await profiles.loadCustomGenres(true))[1].vocalDb,1.5)
+assert.equal((await post(louder)).status,200)
+assert.equal((await (await api.onRequestGet({env:{DB}})).json()).profiles[0].vocalDb,1.5)
+assert.equal((await post({...louder,vocalDb:7})).status,400)
+assert.equal((await post({...louder,vocalDb:'2'})).status,400)
+console.log('Passed vocal target direction, exact zero-offset compatibility, dB conversion, persistence and validation checks.')

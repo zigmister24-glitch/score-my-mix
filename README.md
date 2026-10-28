@@ -72,3 +72,15 @@ Tonal score weights: Weight 20%, Body 25%, Core 25%, Presence 20%, Air 10%.
 Density retains its existing worst-band/stack scoring and includes Presence
 among the evaluated bands. Five-band references are renormalised, so scores
 can differ from earlier four-band results and should be reviewed by ear.
+
+### Vocal preference adjustment
+
+Editable profiles include a Vocal target adjustment from -6 to +6 dB.
+Positive values raise the expected vocal-to-mix ratio; negative values lower it.
+Zero preserves the genre's existing target. This is a preference for the vocal
+estimate, not a vocal stem gain or a change to the audio. Built-in profiles show
+this adjustment read-only at zero. Existing profiles default to zero.
+
+Before deploying to an existing D1 database, run `db/genre-profiles-vocals.sql`
+once. Deploy `functions/api/genre-profiles.js` with the frontend. New databases
+can use the latest `db/genre-profiles.sql` directly instead of ALTER migrations.

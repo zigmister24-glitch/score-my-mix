@@ -1,0 +1,2 @@
+ALTER TABLE genre_profiles ADD COLUMN vocal_db REAL NOT NULL DEFAULT 0
+CHECK (vocal_db BETWEEN -6 AND 6);

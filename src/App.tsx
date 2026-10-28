@@ -742,12 +742,12 @@ export default function App() {
   useEffect(() => { refreshCustomGenres().catch(error => setGenreError(error.message)) }, [])
   const currentGenreProfile = (genre = selectedGenre): AnalysisGenreProfile => {
     const custom = customGenresRef.current.find(profile => profile.id === genre)
-    return { ...GENRE_PROFILES[genre], ...(custom ? {tonalDb: custom.db} : {}) }
+    return { ...GENRE_PROFILES[genre], ...(custom ? {tonalDb: custom.db, vocalDb:custom.vocalDb ?? 0} : {}) }
   }
   const saveGenreEditor = async () => {
     if (genreReadOnly) return
-    if (!genreEditor || !genreEditor.name.trim() || !BAND_KEYS.every(key => Number.isFinite(genreEditor.db[key]) && Math.abs(genreEditor.db[key]) <= 12)) {
-      setGenreError('Enter a name and band values between -12 and +12 dB.'); return
+    if (!genreEditor || !genreEditor.name.trim() || !Number.isFinite(genreEditor.vocalDb ?? 0) || Math.abs(genreEditor.vocalDb ?? 0) > 6 || !BAND_KEYS.every(key => Number.isFinite(genreEditor.db[key]) && Math.abs(genreEditor.db[key]) <= 12)) {
+      setGenreError('Enter a name, band values between -12 and +12 dB, and a vocal adjustment between -6 and +6 dB.'); return
     }
     setGenreSaveBusy(true); setGenreError('')
     try {
@@ -1540,7 +1540,7 @@ export default function App() {
               if (custom) setGenreEditor(structuredClone(custom))
               else {
                 const profile: AnalysisGenreProfile = GENRE_PROFILES[selectedGenre]
-                setGenreEditor({id:selectedGenre, name:selectedGenre, db:Object.fromEntries(BAND_KEYS.map(key => [key,20 * Math.log10(1 + (profile.tonal?.[key] ?? 0) / 100)])) as CustomGenre['db']})
+                setGenreEditor({id:selectedGenre, name:selectedGenre, vocalDb:0, db:Object.fromEntries(BAND_KEYS.map(key => [key,20 * Math.log10(1 + (profile.tonal?.[key] ?? 0) / 100)])) as CustomGenre['db']})
               }
             }}
             onGenreChange={handleGenreChange}
@@ -1556,6 +1556,12 @@ export default function App() {
               <input type="number" readOnly={genreReadOnly} required min={-12} max={12} step="0.01" value={Number.isNaN(genreEditor.db[key]) ? '' : Math.round(genreEditor.db[key] * 100) / 100} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,db:{...genreEditor.db,[key]:e.target.valueAsNumber}})} />
               <small>{Number.isFinite(genreEditor.db[key]) ? `${genreEditor.db[key] > 0 ? '+' : genreEditor.db[key] < 0 ? '−' : ''}${Math.abs(genreEditor.db[key]).toFixed(2)} dB ${genreEditor.db[key] > 0 ? 'above Modern Pop' : genreEditor.db[key] < 0 ? 'below Modern Pop' : '— matches Modern Pop'}` : 'Enter a dB offset'}</small>
             </label>)}</div>
+            <label>Vocal target adjustment (dB)
+              <input type="number" min={-6} max={6} step="0.1" required readOnly={genreReadOnly} disabled={genreSaveBusy}
+                value={Number.isNaN(genreEditor.vocalDb) ? '' : genreEditor.vocalDb ?? 0}
+                onChange={event => setGenreEditor({...genreEditor,vocalDb:event.target.valueAsNumber})} />
+              <small>Positive values expect louder vocals; negative values allow quieter vocals. This changes the analysis target, not your audio. 0 dB keeps this genre’s existing vocal target.</small>
+            </label>
             {!genreReadOnly && <button type="submit" className="nav-button" disabled={genreSaveBusy}>{genreSaveBusy ? 'Saving…' : 'Save profile'}</button>}
             <button type="button" className="nav-button" disabled={genreSaveBusy} onClick={() => {setGenreEditor(null);setGenreError('')}}>{genreReadOnly ? 'Close' : 'Cancel'}</button>
           </form>}

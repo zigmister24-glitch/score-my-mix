@@ -8,5 +8,6 @@ CREATE TABLE IF NOT EXISTS genre_profiles (
   core_db REAL NOT NULL CHECK (core_db BETWEEN -12 AND 12),
   presence_db REAL NOT NULL DEFAULT 0 CHECK (presence_db BETWEEN -12 AND 12),
   air_db REAL NOT NULL CHECK (air_db BETWEEN -12 AND 12),
+  vocal_db REAL NOT NULL DEFAULT 0 CHECK (vocal_db BETWEEN -6 AND 6),
   updated_at TEXT NOT NULL
 );

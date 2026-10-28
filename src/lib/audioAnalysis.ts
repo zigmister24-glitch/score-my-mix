@@ -23,6 +23,7 @@ export type AnalysisGenreProfile = {
     presence?: number
     air?: number
   }
+  vocalDb?: number
   vocals?: number
   width?: {
     middle?: number
@@ -753,6 +754,12 @@ function buildTonalBalanceBands(samples: AnalysisSamples, sampleRate: number, st
 }
 
 const VOCAL_LEVEL_TARGET_ROCK = 0.38
+
+function vocalTargets(genreProfile?: AnalysisGenreProfile) {
+  const base = clamp(VOCAL_LEVEL_TARGET_ROCK + ((genreProfile?.vocals ?? 0) * 0.01), 0.28, 0.48)
+  const gain = 10 ** (clamp(genreProfile?.vocalDb ?? 0, -6, 6) / 20)
+  return { target:base * gain, judgementTarget:clamp(base - 0.018, 0.24, 0.48) * gain }
+}
 
 function makeLevelBalanceItem(key: 'vocals' | 'drums' | 'kick' | 'snare' | 'cymbals', label: string, ratio: number, target: number): BalanceStripItem {
   const rawDeviation = ((ratio - target) / Math.max(0.0001, target)) * 100
@@ -1494,7 +1501,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     const drumLevelRatio = (kickProxy * 0.45) + (snareProxy * 0.35) + (transientProxy * 2.2)
     const drumLevelTarget = 0.42
     const vocalRatio = vocalBand / Math.max(0.0001, fullRms)
-    const vocalTarget = clamp(VOCAL_LEVEL_TARGET_ROCK + ((genreProfile?.vocals ?? 0) * 0.01), 0.28, 0.48)
+    const vocalTarget = vocalTargets(genreProfile).target
 
     // v0.109: Strong Vocal Anchor Rescue.
     // Use the current section as the primary judge.
@@ -1600,7 +1607,7 @@ export function buildSections(buffer: AudioBuffer, customBoundaries?: number[], 
     // target. To move the displayed vocal placement slightly to the right, lower
     // the judgement target a touch instead. This keeps the adaptive sparse
     // arrangement window intact while matching the APT/Billie Jean calibration.
-    const vocalJudgementTarget = clamp(vocalTarget - 0.018, 0.24, 0.48)
+    const vocalJudgementTarget = vocalTargets(genreProfile).judgementTarget
     const judgedVocalRatio = vocalJudgementTarget + ((rawJudgedVocalRatio - vocalJudgementTarget) * (1 - (sparseVocalTolerance * 0.72)))
 
     const drumsVsEverything = scoreAroundTarget(drumLevelRatio, drumLevelTarget, 150, 40, 94)
