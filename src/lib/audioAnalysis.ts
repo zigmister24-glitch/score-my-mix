@@ -917,7 +917,7 @@ function measureBreathing(buffer: AudioBuffer, start: number, end: number): Bala
   const quality=enough ? Math.min(1,relative/.10,delta/.01) : 1
   const score=90+10*quality
   return {key:'breathing',label:'Breathing',range:'Within this section',deviationPercent:relative*100,
-    displayPercent:delta*100,breathingScore:score,breathingAvailable:enough,
+    displayPercent:delta*100,typicalWidthPercent:percentile(.5)*100,breathingScore:score,breathingAvailable:enough,
     status:quality>=1?'good':'low',severity:quality>=1?'good':'watch',
     action:enough ? `Typical width range (10th–90th percentile): ${(delta*100).toFixed(1)} percentage points; ${(relative*100).toFixed(1)}% of typical width. Full credit at 10% relative variation and at least 1 point absolute variation. This is provisional stereo-breathing calibration.` : 'Not enough active stereo audio to judge breathing; no deduction applied.'}
 }

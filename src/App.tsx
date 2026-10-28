@@ -314,7 +314,7 @@ function impactReadout(item: ImpactStrip) {
 
 function widthReadout(item: BalanceStripItem) {
   if (item.key === 'breathing' && item.breathingAvailable === false) return 'Not enough audio'
-  if (item.key === 'breathing') return `${(item.displayPercent ?? 0).toFixed(1)} pp · ${(item.breathingScore ?? 100) >= 100 ? 'Breathing' : 'Steady'}`
+  if (item.key === 'breathing') return `${(item.typicalWidthPercent ?? 0).toFixed(1)}% typical · ${(item.displayPercent ?? 0).toFixed(1)} pp breathing · ${(item.breathingScore ?? 100).toFixed(1)}% score`
   const value=item.deviationPercent
   return `${value > 0 ? '+' : ''}${value}% · ${value === 0 ? 'Steady' : value > 0 ? 'Widening' : 'Narrowing'}`
 }
@@ -1799,7 +1799,7 @@ export default function App() {
                             const readout = `${widthReadout(item)}${item.key === 'movement' && activeSection.movementIgnored ? ' · Ignored' : ''}`
                             const infoOnly = item.key !== 'movement'
                             return (
-                              <div className={`tonal-band-row tonal-${item.severity} ${infoOnly ? 'profile-info-row' : 'profile-action-row'}`} key={item.key} title={item.action}>
+                              <div className={`tonal-band-row tonal-${item.severity} ${infoOnly ? 'profile-info-row' : 'profile-action-row'} ${item.key === 'breathing' ? 'width-breathing-row' : ''}`} key={item.key} title={item.action}>
                                 <span className="tonal-band-name">{item.label}<small>{item.range}</small>
                                   {item.key === 'movement' && <select className="vocal-override-card-select" aria-label="Width movement scoring mode"
                                     value={activeSection.movementIgnored ? 'ignore' : 'score'}

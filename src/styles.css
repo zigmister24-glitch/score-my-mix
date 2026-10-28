@@ -1238,3 +1238,10 @@ button, input { font: inherit; }
 .live-width-value-right { right: 0; }
 
 .live-width-dot { position: absolute; top: 9px; width: 12px; height: 12px; transform: translateX(-50%); border-radius: 50%; background: #f3b4e5; border: 1px solid #ffe0f4; }
+
+.tonal-band-row.width-breathing-row { grid-template-columns: 92px minmax(0, 1fr) max-content; }
+.width-breathing-row .tonal-readout { text-align: right; line-height: 1.4; white-space: nowrap; }
+@media (max-width: 650px) {
+  .tonal-band-row.width-breathing-row { grid-template-columns: 78px minmax(0, 1fr); }
+  .width-breathing-row .tonal-readout { grid-column: 1 / -1; white-space: normal; }
+}
