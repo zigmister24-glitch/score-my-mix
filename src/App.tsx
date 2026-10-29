@@ -314,7 +314,12 @@ function impactReadout(item: ImpactStrip) {
 
 function widthReadout(item: BalanceStripItem) {
   if (item.key === 'breathing' && item.breathingAvailable === false) return 'Not enough audio'
-  if (item.key === 'breathing') return `${(item.typicalWidthPercent ?? 0).toFixed(1)}% typical · ${(item.displayPercent ?? 0).toFixed(1)} pp breathing · ${(item.breathingScore ?? 100).toFixed(1)}% score`
+  if (item.key === 'breathing') {
+    const typical = item.typicalWidthPercent ?? 0
+    const delta = item.displayPercent ?? 0
+    const relative = typical > 0 ? delta / typical * 100 : 0
+    return `${typical.toFixed(1)}% typical · ${delta.toFixed(1)} pp breathing · ${relative.toFixed(1)}% relative`
+  }
   const value=item.deviationPercent
   return `${value > 0 ? '+' : ''}${value}% · ${value === 0 ? 'Steady' : value > 0 ? 'Widening' : 'Narrowing'}`
 }
