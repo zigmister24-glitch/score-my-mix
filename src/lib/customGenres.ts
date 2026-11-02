@@ -3,7 +3,7 @@ export type BandKey = typeof BAND_KEYS[number]
 export type CustomGenre = { id: string; name: string; vocalDb?: number; db: Record<BandKey, number> }
 export const CUSTOM_IDS = ['Scarlett Lullaby', 'User Defined 1', 'User Defined 2', 'User Defined 3', 'User Defined 4']
 export function defaultCustomGenres(): CustomGenre[] {
-  return CUSTOM_IDS.map(id => ({ id, name: id, vocalDb:0, db: Object.fromEntries(BAND_KEYS.map(key => [key,
+  return CUSTOM_IDS.map(id => ({ id, name: id, vocalDb:id === 'Scarlett Lullaby' ? -1.5 : 0, db: Object.fromEntries(BAND_KEYS.map(key => [key,
     0,
   ])) as Record<BandKey, number> }))
 }
@@ -22,7 +22,7 @@ export async function loadCustomGenres(local: boolean): Promise<CustomGenre[]> {
   if (!Array.isArray(data)) throw new Error('Genre profiles API returned an invalid profile list.')
   return defaults.map(base => {
     const existing = data.find(item => item.id === base.id)
-    const saved = existing ? {...existing, vocalDb:existing.vocalDb ?? 0, db:{...existing.db, presence:existing.db?.presence ?? 0}} : null
+    const saved = existing ? {...existing, vocalDb:existing.vocalDb ?? base.vocalDb, db:{...existing.db, presence:existing.db?.presence ?? 0}} : null
     return saved && typeof saved.name === 'string' && Number.isFinite(saved.vocalDb) && Math.abs(saved.vocalDb) <= 6 && BAND_KEYS.every(key => Number.isFinite(saved.db?.[key]) && Math.abs(saved.db[key]) <= 12) ? saved : base
   })
 }

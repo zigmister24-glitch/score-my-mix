@@ -138,7 +138,7 @@ All five editable tonal offsets are relative to this new reference and apply
 multiplicatively to each of the separately calibrated tonal/density targets,
 followed by normalisation. The score weights and tolerance curves are unchanged.
 Existing saved profile values are retained; old compensating offsets should be
-reset to zero if the user wants the calibrated reference exactly. The editor's
-Reset tonal targets to EDM button changes the draft; Save persists it. Vocal
-target preferences and saved section boundaries/ignore settings are unaffected.
+set manually to zero and saved if the user wants the calibrated reference exactly.
+There is no automatic reset button. Scarlett Lullaby defaults to a -1.5 dB vocal
+adjustment; existing saved vocal preferences take precedence. Vocal target preferences and saved section boundaries/ignore settings are unaffected.
 No SQL migration is required.
