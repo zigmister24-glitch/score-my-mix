@@ -89,7 +89,7 @@ assert.equal((await post({...louder,vocalDb:7})).status,400)
 assert.equal((await post({...louder,vocalDb:'2'})).status,400)
 console.log('Passed vocal target direction, exact zero-offset compatibility, dB conversion, persistence and validation checks.')
 
-assert.equal(profiles.defaultCustomGenres().find(p=>p.id==='Scarlett Lullaby').vocalDb,-1.5)
+assert.equal(profiles.defaultCustomGenres().find(p=>p.id==='Scarlett Lullaby').vocalDb,-1.2)
 assert.ok(profiles.defaultCustomGenres().filter(p=>p.id!=='Scarlett Lullaby').every(p=>p.vocalDb===0))
 stored=JSON.stringify([{...profiles.defaultCustomGenres()[0],vocalDb:2}])
 assert.equal((await profiles.loadCustomGenres(true))[0].vocalDb,2)
