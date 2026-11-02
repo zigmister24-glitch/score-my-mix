@@ -1544,7 +1544,6 @@ export default function App() {
                 onChange={event => setGenreEditor({...genreEditor,vocalDb:event.target.valueAsNumber})} />
               <small>Positive values expect louder vocals; negative values allow quieter vocals. This changes the analysis target, not your audio. 0 dB keeps this genre’s existing vocal target.</small>
             </label>
-            <p>EDM reference calibrated from “Hi”, 01:09–01:22, aligned by ear and TBC2. It is a personal reference, not iZotope’s factory target. Existing saved offsets remain applied.</p>
 
             {!genreReadOnly && <button type="submit" className="nav-button" disabled={genreSaveBusy}>{genreSaveBusy ? 'Saving…' : 'Save profile'}</button>}
             <button type="button" className="nav-button" disabled={genreSaveBusy} onClick={() => {setGenreEditor(null);setGenreError('')}}>{genreReadOnly ? 'Close' : 'Cancel'}</button>
