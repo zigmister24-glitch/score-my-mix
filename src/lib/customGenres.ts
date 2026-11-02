@@ -3,7 +3,7 @@ export type BandKey = typeof BAND_KEYS[number]
 export type CustomGenre = { id: string; name: string; vocalDb?: number; db: Record<BandKey, number> }
 export const CUSTOM_IDS = ['Scarlett Lullaby', 'User Defined 1', 'User Defined 2', 'User Defined 3', 'User Defined 4']
 export function defaultCustomGenres(): CustomGenre[] {
-  return CUSTOM_IDS.map(id => ({ id, name: id, vocalDb:id === 'Scarlett Lullaby' ? -1.2 : 0, db: Object.fromEntries(BAND_KEYS.map(key => [key,
+  return CUSTOM_IDS.map(id => ({ id, name: id, vocalDb:0, db: Object.fromEntries(BAND_KEYS.map(key => [key,
     0,
   ])) as Record<BandKey, number> }))
 }

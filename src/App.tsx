@@ -1542,7 +1542,7 @@ export default function App() {
               <input type="number" min={-6} max={6} step="0.1" required readOnly={genreReadOnly} disabled={genreSaveBusy}
                 value={Number.isNaN(genreEditor.vocalDb) ? '' : genreEditor.vocalDb ?? 0}
                 onChange={event => setGenreEditor({...genreEditor,vocalDb:event.target.valueAsNumber})} />
-              <small>Positive values expect louder vocals; negative values allow quieter vocals. This changes the analysis target, not your audio. 0 dB keeps this genre’s existing vocal target.</small>
+              <small>Positive values expect louder vocals; negative values allow quieter vocals. This changes the analysis target, not your audio. 0 dB uses this genre’s baseline target, already lowered by 1.2 dB.</small>
             </label>
 
             {!genreReadOnly && <button type="submit" className="nav-button" disabled={genreSaveBusy}>{genreSaveBusy ? 'Saving…' : 'Save profile'}</button>}

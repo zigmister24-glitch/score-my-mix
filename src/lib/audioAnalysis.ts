@@ -768,10 +768,12 @@ function buildTonalBalanceBands(samples: AnalysisSamples, sampleRate: number, st
 }
 
 const VOCAL_LEVEL_TARGET_ROCK = 0.38
+// Editor offsets are additional to this calibrated baseline reduction.
+const VOCAL_BASELINE_DB = -1.2
 
 function vocalTargets(genreProfile?: AnalysisGenreProfile) {
   const base = clamp(VOCAL_LEVEL_TARGET_ROCK + ((genreProfile?.vocals ?? 0) * 0.01), 0.28, 0.48)
-  const gain = 10 ** (clamp(genreProfile?.vocalDb ?? 0, -6, 6) / 20)
+  const gain = 10 ** ((VOCAL_BASELINE_DB + clamp(genreProfile?.vocalDb ?? 0, -6, 6)) / 20)
   return { target:base * gain, judgementTarget:clamp(base - 0.018, 0.24, 0.48) * gain }
 }
 
