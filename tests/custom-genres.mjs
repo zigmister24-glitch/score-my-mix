@@ -11,7 +11,7 @@ const analysis = await moduleFrom('src/lib/audioAnalysis.ts', '\nexport {buildTo
 const defaults = profiles.defaultCustomGenres()
 assert.equal(defaults.length,5)
 const sr=48000, samples=Float32Array.from({length:sr},(_,i)=>Math.sin(i*2*Math.PI*70/sr)*.2+Math.sin(i*2*Math.PI*1050/sr)*.1+Math.sin(i*2*Math.PI*8500/sr)*.05)
-const legacy=analysis.buildTonalBalanceBands(samples,sr,0,sr,{tonal:{weight:14,body:4,core:2,air:1}})
+const legacy=analysis.buildTonalBalanceBands(samples,sr,0,sr,{tonal:{weight:0,body:0,core:0,presence:0,air:0}})
 const migrated=analysis.buildTonalBalanceBands(samples,sr,0,sr,{tonalDb:defaults[0].db})
 for(let i=0;i<5;i++) {assert.equal(legacy[i].deviationPercent,migrated[i].deviationPercent);assert.ok(Math.abs(legacy[i].deviationDb-migrated[i].deviationDb)<1e-9)}
 const zero=analysis.buildTonalBalanceBands(samples,sr,0,sr,{tonalDb:{weight:0,body:0,core:0,presence:0,air:0}})

@@ -4,7 +4,7 @@ export type CustomGenre = { id: string; name: string; vocalDb?: number; db: Reco
 export const CUSTOM_IDS = ['Scarlett Lullaby', 'User Defined 1', 'User Defined 2', 'User Defined 3', 'User Defined 4']
 export function defaultCustomGenres(): CustomGenre[] {
   return CUSTOM_IDS.map(id => ({ id, name: id, vocalDb:0, db: Object.fromEntries(BAND_KEYS.map(key => [key,
-    id === 'Scarlett Lullaby' ? 20 * Math.log10(1 + ({weight:14, body:4, core:2, presence:0, air:1}[key]) / 100) : 0,
+    0,
   ])) as Record<BandKey, number> }))
 }
 async function profileResponse(response: Response) {

@@ -2,7 +2,7 @@ import { AuditionBand } from './lib/bandAudition'
 import { BAND_KEYS, CUSTOM_IDS, CustomGenre, defaultCustomGenres, loadCustomGenres, persistCustomGenre } from './lib/customGenres'
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import WaveformPanel, { WaveformHandle } from './components/WaveformPanel'
-import { AnalysisGenreProfile, buildSections, decodeAudioFile, formatTime } from './lib/audioAnalysis'
+import { AnalysisGenreProfile, EDM_REFERENCE, buildSections, decodeAudioFile, formatTime } from './lib/audioAnalysis'
 import { SectionAnalysis, VocalOverrideMode, ImpactStrip, BalanceStripItem } from './lib/types'
 
 function curveSliderPosition(deviationPercent: number, isMovement = false) {
@@ -75,18 +75,12 @@ const IS_LOCAL_DEV = window.location.hostname === 'localhost' || window.location
 
 const ACCEPTED_TYPES = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac']
 const GENRE_PROFILES = {
-  'Modern Pop': { tonal: { weight: 0, body: 0, core: 0, air: 0 }, density: { weight: 0, body: 12, core: 0, air: 0 }, densityWeights: { weight: 0.22, body: 0.36, core: 0.29, air: 0.13 }, vocals: 0 },
-  'EDM / Dance': { tonal: { weight: 8, body: -2, core: -2, air: 4 }, density: { weight: 10, body: 5, core: -3, air: 6 }, densityWeights: { weight: 0.32, body: 0.26, core: 0.22, air: 0.20 }, vocals: -1 },
-  'Rock': { tonal: { weight: 2, body: 5, core: 4, air: -2 }, density: { weight: 1, body: 18, core: 6, air: -4 }, densityWeights: { weight: 0.23, body: 0.40, core: 0.27, air: 0.10 }, vocals: 0 },
-  'Metal / Nu Metal': { tonal: { weight: 5, body: 3, core: 5, air: 1 }, density: { weight: 8, body: 12, core: 8, air: 0 }, densityWeights: { weight: 0.29, body: 0.32, core: 0.29, air: 0.10 }, vocals: 1 },
-  'Hip Hop / Rap': { tonal: { weight: 10, body: 2, core: -3, air: 2 }, density: { weight: 14, body: 10, core: -4, air: -2 }, densityWeights: { weight: 0.40, body: 0.33, core: 0.18, air: 0.09 }, vocals: 1 },
-  'Singer Songwriter': { tonal: { weight: -3, body: 2, core: 5, air: 2 }, density: { weight: -6, body: 8, core: 6, air: 2 }, densityWeights: { weight: 0.14, body: 0.35, core: 0.36, air: 0.15 }, vocals: 2 },
-  'Cinematic / Trailer': { tonal: { weight: 8, body: 6, core: -2, air: 1 }, density: { weight: 12, body: 20, core: -4, air: -4 }, densityWeights: { weight: 0.35, body: 0.42, core: 0.15, air: 0.08 }, vocals: 0 },
-  'User Defined 1': {},
-  'User Defined 2': {},
-  'User Defined 3': {},
-  'User Defined 4': {},
-  'Scarlett Lullaby': { tonal: { weight: 14, body: 4, core: 2, air: 1 }, density: { weight: 14, body: 22, core: 4, air: -2 }, densityWeights: { weight: 0.34, body: 0.42, core: 0.16, air: 0.08 }, vocals: 2 },
+  'EDM / Dance': { reference: EDM_REFERENCE, vocals: -1 },
+  'User Defined 1': { reference: EDM_REFERENCE },
+  'User Defined 2': { reference: EDM_REFERENCE },
+  'User Defined 3': { reference: EDM_REFERENCE },
+  'User Defined 4': { reference: EDM_REFERENCE },
+  'Scarlett Lullaby': { reference: EDM_REFERENCE, vocals: 2 },
 } as const satisfies Record<string, AnalysisGenreProfile>
 
 type GenreProfileName = keyof typeof GENRE_PROFILES
@@ -477,7 +471,7 @@ async function readSongGenre(track: TrackIdentityState): Promise<GenreProfileNam
 
     return genre && genre in GENRE_PROFILES ? genre as GenreProfileName : null
   } catch (error) {
-    console.warn('Song genre unavailable. Falling back to Modern Pop:', error)
+    console.warn('Song genre unavailable. Falling back to EDM reference:', error)
     return null
   }
 }
@@ -678,7 +672,7 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const [leaderboardLast30, setLeaderboardLast30] = useState<LeaderboardEntry[]>([])
   const [leaderboardMessage, setLeaderboardMessage] = useState('')
-  const [selectedGenre, setSelectedGenre] = useState<GenreProfileName>('Modern Pop')
+  const [selectedGenre, setSelectedGenre] = useState<GenreProfileName>('EDM / Dance')
   const [leaderboardLoading, setLeaderboardLoading] = useState(true)
   const analysisRef = useRef<HTMLElement | null>(null)
   const waveformApiRef = useRef<WaveformHandle | null>(null)
@@ -844,7 +838,7 @@ export default function App() {
       const savedGenre = await readSongGenre(nextTrackIdentity)
       const savedMap = await readSectionMap(nextTrackIdentity, savedGenre ?? undefined)
       const loadedGenre = savedGenre
-        ?? (savedMap?.genre && savedMap.genre in GENRE_PROFILES ? savedMap.genre : 'Modern Pop')
+        ?? (savedMap?.genre && savedMap.genre in GENRE_PROFILES ? savedMap.genre : 'EDM / Dance')
 
       setSelectedGenre(loadedGenre)
       const nextSections = savedMap
@@ -1537,12 +1531,12 @@ export default function App() {
           {genreError && <p role="alert">{genreError}</p>}
           {genreEditor && <form className="panel genre-editor" onSubmit={event => {event.preventDefault(); void saveGenreEditor()}}>
             <h3>{genreReadOnly ? 'Genre profile — read only' : 'Edit genre profile'}</h3>
-            <p>Band targets in dB relative to Modern Pop. Targets are normalised together; these settings do not apply EQ to your audio. Presence and Air also adjust their Density references. Saved profiles are shared across browsers.</p>
+            <p>Band targets in dB relative to EDM reference. Targets are normalised together; these settings do not apply EQ to your audio. Presence and Air also adjust their Density references. Saved profiles are shared across browsers.</p>
             {genreReadOnly && <p>This is a built-in reference profile. Use a User Defined genre to create your own targets.</p>}
             <label>Name <input readOnly={genreReadOnly} required maxLength={80} value={genreEditor.name} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,name:e.target.value})} /></label>
             <div className="genre-editor-bands">{BAND_KEYS.map(key => <label key={key}>{({weight:'Weight',body:'Body',core:'Core',presence:'Presence',air:'Air'})[key]} (dB)
               <input type="number" readOnly={genreReadOnly} required min={-12} max={12} step="0.01" value={Number.isNaN(genreEditor.db[key]) ? '' : Math.round(genreEditor.db[key] * 100) / 100} disabled={genreSaveBusy} onChange={e => setGenreEditor({...genreEditor,db:{...genreEditor.db,[key]:e.target.valueAsNumber}})} />
-              <small>{Number.isFinite(genreEditor.db[key]) ? `${genreEditor.db[key] > 0 ? '+' : genreEditor.db[key] < 0 ? '−' : ''}${Math.abs(genreEditor.db[key]).toFixed(2)} dB ${genreEditor.db[key] > 0 ? 'above Modern Pop' : genreEditor.db[key] < 0 ? 'below Modern Pop' : '— matches Modern Pop'}` : 'Enter a dB offset'}</small>
+              <small>{Number.isFinite(genreEditor.db[key]) ? `${genreEditor.db[key] > 0 ? '+' : genreEditor.db[key] < 0 ? '−' : ''}${Math.abs(genreEditor.db[key]).toFixed(2)} dB ${genreEditor.db[key] > 0 ? 'above EDM reference' : genreEditor.db[key] < 0 ? 'below EDM reference' : '— matches EDM reference'}` : 'Enter a dB offset'}</small>
             </label>)}</div>
             <label>Vocal target adjustment (dB)
               <input type="number" min={-6} max={6} step="0.1" required readOnly={genreReadOnly} disabled={genreSaveBusy}
@@ -1550,6 +1544,9 @@ export default function App() {
                 onChange={event => setGenreEditor({...genreEditor,vocalDb:event.target.valueAsNumber})} />
               <small>Positive values expect louder vocals; negative values allow quieter vocals. This changes the analysis target, not your audio. 0 dB keeps this genre’s existing vocal target.</small>
             </label>
+            <p>EDM reference calibrated from “Hi”, 01:09–01:22, aligned by ear and TBC2. It is a personal reference, not iZotope’s factory target. Existing saved offsets remain applied.</p>
+            {!genreReadOnly && <button type="button" className="nav-button" disabled={genreSaveBusy}
+              onClick={() => setGenreEditor({...genreEditor,db:{weight:0,body:0,core:0,presence:0,air:0}})}>Reset tonal targets to EDM</button>}
             {!genreReadOnly && <button type="submit" className="nav-button" disabled={genreSaveBusy}>{genreSaveBusy ? 'Saving…' : 'Save profile'}</button>}
             <button type="button" className="nav-button" disabled={genreSaveBusy} onClick={() => {setGenreEditor(null);setGenreError('')}}>{genreReadOnly ? 'Close' : 'Cancel'}</button>
           </form>}

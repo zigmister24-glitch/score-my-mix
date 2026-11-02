@@ -1,6 +1,24 @@
 import { BalanceStripItem, ImpactStrip, Recommendation, SectionAnalysis, SectionMetrics, TonalBalanceBand, MasteringMetrics, VocalOverrideMode } from './types'
 
+export const EDM_REFERENCE = {
+  "tonal": {
+    "weight": 0.33611929096552645,
+    "body": 0.2641783076375041,
+    "core": 0.2080368531657943,
+    "presence": 0.11545043164426143,
+    "air": 0.0762151165869138
+  },
+  "density": {
+    "weight": 0.33437880245446,
+    "body": 0.2628103429842548,
+    "core": 0.2121377863621406,
+    "presence": 0.11485260773092018,
+    "air": 0.07582046046822433
+  }
+} as const
+
 export type AnalysisGenreProfile = {
+  reference?: {tonal: Record<TonalBalanceBand['key'], number>; density: Record<TonalBalanceBand['key'], number>}
   tonalDb?: { weight: number; body: number; core: number; presence?: number; air: number }
   tonal?: {
     weight?: number
@@ -58,6 +76,11 @@ function scoreTonalBalance(bands: TonalBalanceBand[]) {
 }
 
 function densityTargets(genreProfile?: AnalysisGenreProfile) {
+  if (genreProfile?.reference) {
+    const offsets = genreProfile.tonalDb
+    return normalizeTargets(Object.fromEntries(Object.entries(genreProfile.reference.density).map(([key, value]) =>
+      [key, value * 10 ** ((offsets?.[key as keyof typeof offsets] ?? 0) / 20)]))) as Record<TonalBalanceBand['key'], number>
+  }
   // Reference-calibrated occupancy targets. These are intentionally not centred
   // around a scooped low-mid profile: commercial references often carry Body
   // density well to the right while still sounding finished.
@@ -724,7 +747,10 @@ function buildTonalBalanceBands(samples: AnalysisSamples, sampleRate: number, st
   const high = bandpassRms(samples, sampleRate, startIndex, endIndex, 8500, 0.7)
   const presence = bandpassRms(samples, sampleRate, startIndex, endIndex, 3200, 1)
   const total = Math.max(0.0001, low + lowMid + mid + presence + high)
-  const targets = normalizeTargets({
+  const targets = genreProfile?.reference
+    ? normalizeTargets(Object.fromEntries(Object.entries(genreProfile.reference.tonal).map(([key, value]) =>
+        [key, value * 10 ** ((genreProfile.tonalDb?.[key as keyof NonNullable<AnalysisGenreProfile['tonalDb']>] ?? 0) / 20)]))) as Record<TonalBalanceBand['key'], number>
+    : normalizeTargets({
     presence: genreProfile?.tonalDb ? 0.17647058823529413 * 10 ** ((genreProfile.tonalDb.presence ?? 0) / 20) : shiftedTarget(0.17647058823529413, genreProfile?.tonal?.presence),
     weight: genreProfile?.tonalDb ? 0.28 * 10 ** (genreProfile.tonalDb.weight / 20) : shiftedTarget(0.28, genreProfile?.tonal?.weight),
     body: genreProfile?.tonalDb ? 0.24 * 10 ** (genreProfile.tonalDb.body / 20) : shiftedTarget(0.24, genreProfile?.tonal?.body),
@@ -957,7 +983,7 @@ function scoreWidthFromBands(widthBands: BalanceStripItem[], movementIgnored = f
   return clamp(Math.round(base * .95 + bonus),0,100)
 }
 
-function buildClarityBands(
+function measureDensityShares(
   samples: AnalysisSamples,
   sampleRate: number,
   startIndex: number,
@@ -966,7 +992,7 @@ function buildClarityBands(
   fullRms: number,
   sectionContext?: { impact?: number; width?: number; tonalBalance?: number; coreStereoSeparation?: number },
   genreProfile?: AnalysisGenreProfile,
-): BalanceStripItem[] {
+) {
   const weight = bandpassRms(samples, sampleRate, startIndex, endIndex, 70, 0.75)
   const body = bandpassRms(samples, sampleRate, startIndex, endIndex, 220, 0.85)
 
@@ -1055,7 +1081,6 @@ function buildClarityBands(
       ? Math.max(twoZoneCoreClash, broadCoreClash * 0.72)
       : Math.max(sortedCoreClashes[0], broadCoreClash)) * coreDensityTolerance
 
-  const targets = densityTargets(genreProfile)
   const densityShare = {
     weight: weightShare,
     body: bodyShare,
@@ -1064,6 +1089,17 @@ function buildClarityBands(
     air: airShare,
   }
 
+  return densityShare
+}
+
+function buildClarityBands(
+  samples: AnalysisSamples, sampleRate: number, startIndex: number, endIndex: number,
+  transientEnergy: number, fullRms: number,
+  sectionContext?: { impact?: number; width?: number; tonalBalance?: number; coreStereoSeparation?: number },
+  genreProfile?: AnalysisGenreProfile,
+): BalanceStripItem[] {
+  const densityShare = measureDensityShares(samples, sampleRate, startIndex, endIndex, transientEnergy, fullRms, sectionContext, genreProfile)
+  const targets = densityTargets(genreProfile)
   return [
     makeClarityBand('weight', 'Weight', '20–120 Hz', densityShare.weight, targets.weight, 'Weight is lean for this reference profile. Add bass/kick support before cutting low-mids.', 'Separate kick and bass first: try sidechain or cut one small pocket around 60–100 Hz.'),
     makeClarityBand('body', 'Body', '120–350 Hz', densityShare.body, targets.body, 'Body is lean against commercial references. Add warmth with guitars, pads, bass harmonics, or a gentle 180–300 Hz lift.', 'Low-mid accumulation is above this reference zone. Check guitars, pads, bass harmonics, and reverb returns before cutting the mix bus.'),

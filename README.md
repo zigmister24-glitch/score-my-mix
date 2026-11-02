@@ -122,3 +122,23 @@ Movement remains the same signed previous-section comparison, with an absolute
 20% change earning the maximum +5 bonus, capped at 100%. Ignore Movement awards
 that full allowance. The first section uses Breathing alone. This measures
 stereo variation, not overall dynamics, phase safety or musical intent.
+
+
+### EDM reference calibration (Hi, 01:09–01:22)
+
+The only built-in genre is now EDM / Dance. Scarlett Lullaby and the four editable
+slots remain. Removed factory genre selections fall back to EDM on reload.
+The EDM tonal and density references are independently measured from the supplied
+TBC2-aligned Hi.mp3 passage, using our own stereo filter-based analysis. Source
+hash, timing and measured shares are recorded in db/edm-reference-calibration.json.
+This is a single-track personal EDM reference, not iZotope factory curve data or
+a statistically representative EDM genre average.
+
+All five editable tonal offsets are relative to this new reference and apply
+multiplicatively to each of the separately calibrated tonal/density targets,
+followed by normalisation. The score weights and tolerance curves are unchanged.
+Existing saved profile values are retained; old compensating offsets should be
+reset to zero if the user wants the calibrated reference exactly. The editor's
+Reset tonal targets to EDM button changes the draft; Save persists it. Vocal
+target preferences and saved section boundaries/ignore settings are unaffected.
+No SQL migration is required.
